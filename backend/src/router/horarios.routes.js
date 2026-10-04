@@ -1,6 +1,6 @@
 const express = require("express");
 const multer = require("multer");
-const db = require("../config/db");
+const pool = require("../config/db");
 
 const router = express.Router();
 
@@ -50,7 +50,7 @@ router.post("/analizar", upload.single("imagen"), async (req, res) => {
       // Buscar casa
       // -------------------------------------
 
-      const [casas] = await db.query(
+      const [casas] = await pool.query(
         `
                 SELECT
                     id,
@@ -72,7 +72,7 @@ router.post("/analizar", upload.single("imagen"), async (req, res) => {
       const trabajadoresValidados = [];
 
       for (const codigo of servicio.trabajadores) {
-        const [trabajadores] = await db.query(
+        const [trabajadores] = await pool.query(
           `
                     SELECT
                         id,
@@ -140,7 +140,7 @@ router.post("/analizar", upload.single("imagen"), async (req, res) => {
 });
 
 router.post("/guardar", async (req, res) => {
-  const connection = await db.getConnection();
+  const connection = await pool.getConnection();
 
   try {
     const { fecha, casa_id, hora_inicio, hora_fin, trabajadores } = req.body;
@@ -281,7 +281,7 @@ router.post("/validar", async (req, res) => {
       // Buscar casa
       // -----------------------------------------
 
-      const [casas] = await db.query(
+      const [casas] = await pool.query(
         `
                 SELECT id, nombre, duracion_minutos, activo
                 FROM casas
@@ -299,7 +299,7 @@ router.post("/validar", async (req, res) => {
       const trabajadoresResultado = [];
 
       for (const codigo of servicio.trabajadores) {
-        const [trabajadores] = await db.query(
+        const [trabajadores] = await pool.query(
           `
                     SELECT id, nombre, codigo, activo
                     FROM trabajadores
@@ -350,6 +350,196 @@ router.post("/validar", async (req, res) => {
       ok: false,
       error: "Error validando horario",
     });
+  }
+});
+// ============================================
+// GUARDAR HORARIO COMPLETO
+// ============================================
+
+router.post("/guardar-completo", async (req, res) => {
+  const connection = await pool.getConnection();
+
+  try {
+    const { fecha, imagen_original, servicios } = req.body;
+
+    // ----------------------------------------
+    // VALIDACIONES
+    // ----------------------------------------
+
+    if (!fecha) {
+      return res.status(400).json({
+        ok: false,
+        error: "La fecha es obligatoria",
+      });
+    }
+
+    if (!Array.isArray(servicios) || servicios.length === 0) {
+      return res.status(400).json({
+        ok: false,
+        error: "No hay servicios para guardar",
+      });
+    }
+
+    // ----------------------------------------
+    // COMPROBAR QUE TODO ESTÉ VALIDADO
+    // ----------------------------------------
+
+    for (const servicio of servicios) {
+      if (!servicio.casa_id) {
+        return res.status(400).json({
+          ok: false,
+          error: `La casa de "${servicio.casa}" no está seleccionada`,
+        });
+      }
+
+      if (!servicio.hora_inicio || !servicio.hora_fin) {
+        return res.status(400).json({
+          ok: false,
+          error: `Falta la hora de "${servicio.casa}"`,
+        });
+      }
+
+      if (
+        !Array.isArray(servicio.trabajadores) ||
+        servicio.trabajadores.length === 0
+      ) {
+        return res.status(400).json({
+          ok: false,
+          error: `No hay trabajadores en "${servicio.casa}"`,
+        });
+      }
+    }
+
+    // ----------------------------------------
+    // INICIAR TRANSACCIÓN
+    // ----------------------------------------
+
+    await connection.beginTransaction();
+
+    // ----------------------------------------
+    // CREAR / OBTENER EL DÍA
+    // ----------------------------------------
+
+    const [diasExistentes] = await connection.query(
+      `
+            SELECT id
+            FROM dias
+            WHERE fecha = ?
+            `,
+      [fecha],
+    );
+
+    let diaId;
+
+    if (diasExistentes.length > 0) {
+      diaId = diasExistentes[0].id;
+
+      // Si ya existe ese día, eliminamos
+      // sus horarios anteriores para
+      // reemplazarlos por los nuevos.
+
+      await connection.query(
+        `
+                DELETE FROM horarios
+                WHERE dia_id = ?
+                `,
+        [diaId],
+      );
+
+      await connection.query(
+        `
+                UPDATE dias
+                SET
+                    nombre_archivo = ?,
+                    estado = 'confirmado'
+                WHERE id = ?
+                `,
+        [imagen_original || null, diaId],
+      );
+    } else {
+      const [resultadoDia] = await connection.query(
+        `
+                    INSERT INTO dias
+                    (
+                        fecha,
+                        nombre_archivo,
+                        estado
+                    )
+                    VALUES (?, ?, 'confirmado')
+                    `,
+        [fecha, imagen_original || null],
+      );
+
+      diaId = resultadoDia.insertId;
+    }
+
+    // ----------------------------------------
+    // GUARDAR CADA SERVICIO
+    // ----------------------------------------
+
+    for (const servicio of servicios) {
+      const [resultadoHorario] = await connection.query(
+        `
+                    INSERT INTO horarios
+                    (
+                        dia_id,
+                        casa_id,
+                        hora_inicio,
+                        hora_fin
+                    )
+                    VALUES (?, ?, ?, ?)
+                    `,
+        [diaId, servicio.casa_id, servicio.hora_inicio, servicio.hora_fin],
+      );
+
+      const horarioId = resultadoHorario.insertId;
+
+      // ------------------------------------
+      // TRABAJADORES DEL SERVICIO
+      // ------------------------------------
+
+      for (const trabajadorId of servicio.trabajadores) {
+        await connection.query(
+          `
+                    INSERT INTO horario_trabajadores
+                    (
+                        horario_id,
+                        trabajador_id
+                    )
+                    VALUES (?, ?)
+                    `,
+          [horarioId, trabajadorId],
+        );
+      }
+    }
+
+    // ----------------------------------------
+    // CONFIRMAR TODO
+    // ----------------------------------------
+
+    await connection.commit();
+
+    res.json({
+      ok: true,
+      mensaje: "Horario completo guardado correctamente",
+      dia_id: diaId,
+      servicios_guardados: servicios.length,
+    });
+  } catch (error) {
+    // ----------------------------------------
+    // DESHACER TODO SI HAY ERROR
+    // ----------------------------------------
+
+    await connection.rollback();
+
+    console.error("Error guardando horario completo:", error);
+
+    res.status(500).json({
+      ok: false,
+      error: "Error guardando el horario completo",
+    });
+  } finally {
+    connection.release();
   }
 });
 module.exports = router;
