@@ -3,7 +3,7 @@ const db = require("../config/db");
 
 const router = express.Router();
 
-
+// 
 // GET /api/casas
 router.get("/", async (req, res) => {
     try {

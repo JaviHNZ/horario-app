@@ -21,18 +21,120 @@ router.post("/analizar", upload.single("imagen"), async (req, res) => {
 
     console.log("Imagen recibida:", req.file.originalname);
 
-    const resultado = await analizarHorario(req.file.path, req.file.mimetype);
+    // -----------------------------------------
+    // 1. Analizar imagen con Gemini
+    // -----------------------------------------
+
+    const resultadoGemini = await analizarHorario(
+      req.file.path,
+      req.file.mimetype,
+    );
+
+    // -----------------------------------------
+    // 2. Validar resultado contra MySQL
+    // -----------------------------------------
+
+    const servicios = resultadoGemini.servicios;
+
+    if (!Array.isArray(servicios)) {
+      return res.status(500).json({
+        ok: false,
+        error: "Gemini no devolvió un formato válido",
+      });
+    }
+
+    const serviciosValidados = [];
+
+    for (const servicio of servicios) {
+      // -------------------------------------
+      // Buscar casa
+      // -------------------------------------
+
+      const [casas] = await db.query(
+        `
+                SELECT
+                    id,
+                    nombre,
+                    duracion_minutos,
+                    activo
+                FROM casas
+                WHERE LOWER(TRIM(nombre)) = LOWER(TRIM(?))
+                `,
+        [servicio.casa],
+      );
+
+      const casaEncontrada = casas.length > 0 ? casas[0] : null;
+
+      // -------------------------------------
+      // Buscar trabajadores
+      // -------------------------------------
+
+      const trabajadoresValidados = [];
+
+      for (const codigo of servicio.trabajadores) {
+        const [trabajadores] = await db.query(
+          `
+                    SELECT
+                        id,
+                        nombre,
+                        codigo,
+                        activo
+                    FROM trabajadores
+                    WHERE UPPER(TRIM(codigo)) = UPPER(TRIM(?))
+                    `,
+          [codigo],
+        );
+
+        if (trabajadores.length > 0) {
+          trabajadoresValidados.push({
+            encontrado: true,
+            trabajador: trabajadores[0],
+          });
+        } else {
+          trabajadoresValidados.push({
+            encontrado: false,
+            codigo: codigo,
+          });
+        }
+      }
+
+      // -------------------------------------
+      // Resultado
+      // -------------------------------------
+
+      serviciosValidados.push({
+        casa: {
+          nombre: servicio.casa,
+          encontrada: casaEncontrada !== null,
+          datos: casaEncontrada,
+        },
+
+        hora_inicio: servicio.hora_inicio,
+        hora_fin: servicio.hora_fin,
+
+        trabajadores: trabajadoresValidados,
+      });
+    }
+
+    // -----------------------------------------
+    // 3. Respuesta final
+    // -----------------------------------------
 
     res.json({
       ok: true,
-      resultado,
+
+      imagen: {
+        nombre_original: req.file.originalname,
+      },
+
+      servicios: serviciosValidados,
     });
   } catch (error) {
     console.error("Error analizando horario:", error);
 
     res.status(500).json({
       ok: false,
-      error: "Error al analizar la imagen",
+      error: "Error analizando el horario",
     });
   }
 });
