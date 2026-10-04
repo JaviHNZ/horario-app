@@ -2,6 +2,9 @@ const express = require("express");
 const cors = require("cors");
 
 const horariosRoutes = require("./router/horarios.routes");
+const trabajadoresRoutes = require("./router/trabajadores.routes");
+const casasRoutes = require("./router/casas.routes");
+
 const app = express();
 
 app.use(cors());
@@ -15,7 +18,8 @@ app.use("/api/health", (req, res) => {
 });
 
 app.use("/api/horarios", horariosRoutes);
-
+app.use("/api/trabajadores", trabajadoresRoutes);
+app.use("/api/casas", casasRoutes);
 
 app.get("/", (req, res) => {
     res.send("API funca");
