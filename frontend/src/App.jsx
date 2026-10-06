@@ -1,5 +1,30 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import "./App.css";
+
+const API_BASE = "http://localhost:3000/api";
+
+const normalizarActivo = (valor) => valor === true || valor === 1;
+
+const formatearFecha = (fecha) => {
+  if (!fecha) {
+    return "";
+  }
+
+  return new Date(fecha).toLocaleDateString("es-ES", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+};
+
+const formatearHora = (hora) => {
+  if (!hora) {
+    return "--:--";
+  }
+
+  return String(hora).slice(0, 5);
+};
 
 function App() {
   const [imagen, setImagen] = useState(null);
@@ -34,24 +59,40 @@ function App() {
     duracion_minutos: "",
   });
 
+  const [trabajadorEditando, setTrabajadorEditando] = useState(null);
+  const [casaEditando, setCasaEditando] = useState(null);
+
   const [guardandoTrabajador, setGuardandoTrabajador] = useState(false);
   const [guardandoCasa, setGuardandoCasa] = useState(false);
+
+  const [mostrarHistorial, setMostrarHistorial] = useState(false);
+  const [historial, setHistorial] = useState([]);
+  const [diaHistorial, setDiaHistorial] = useState(null);
+  const [serviciosHistorial, setServiciosHistorial] = useState([]);
+  const [cargandoHistorial, setCargandoHistorial] = useState(false);
+
+  const casasActivas = useMemo(
+    () => casas.filter((casa) => normalizarActivo(casa.activo)),
+    [casas],
+  );
+
+  const trabajadoresActivos = useMemo(
+    () =>
+      trabajadores.filter((trabajador) => normalizarActivo(trabajador.activo)),
+    [trabajadores],
+  );
 
   // =========================================
   // CARGAR CASAS Y TRABAJADORES
   // =========================================
-
-  useEffect(() => {
-    cargarDatos();
-  }, []);
 
   const cargarDatos = async () => {
     try {
       setCargandoDatos(true);
 
       const [respuestaCasas, respuestaTrabajadores] = await Promise.all([
-        fetch("http://localhost:3000/api/horarios/casas"),
-        fetch("http://localhost:3000/api/horarios/trabajadores"),
+        fetch(`${API_BASE}/casas`),
+        fetch(`${API_BASE}/trabajadores`),
       ]);
 
       const datosCasas = await respuestaCasas.json();
@@ -75,6 +116,55 @@ function App() {
     }
   };
 
+  const cargarHistorial = async () => {
+    try {
+      setCargandoHistorial(true);
+
+      const respuesta = await fetch(`${API_BASE}/horarios/historial`);
+      const datos = await respuesta.json();
+
+      if (!respuesta.ok || !datos.ok) {
+        throw new Error(datos.error || "Error cargando historial");
+      }
+
+      setHistorial(datos.dias || []);
+    } catch (error) {
+      console.error(error);
+      setError(error.message);
+    } finally {
+      setCargandoHistorial(false);
+    }
+  };
+
+  useEffect(() => {
+    Promise.resolve().then(() => {
+      cargarDatos();
+      cargarHistorial();
+    });
+  }, []);
+
+  const abrirDiaHistorial = async (diaId) => {
+    try {
+      setCargandoHistorial(true);
+      setError("");
+
+      const respuesta = await fetch(`${API_BASE}/horarios/historial/${diaId}`);
+      const datos = await respuesta.json();
+
+      if (!respuesta.ok || !datos.ok) {
+        throw new Error(datos.error || "Error cargando el día del historial");
+      }
+
+      setDiaHistorial(datos.dia);
+      setServiciosHistorial(datos.servicios || []);
+    } catch (error) {
+      console.error(error);
+      setError(error.message);
+    } finally {
+      setCargandoHistorial(false);
+    }
+  };
+
   // =========================================
   // CREAR TRABAJADOR
   // =========================================
@@ -92,7 +182,7 @@ function App() {
 
     try {
       const respuesta = await fetch(
-        "http://localhost:3000/api/horarios/trabajadores",
+        `${API_BASE}/trabajadores`,
         {
           method: "POST",
           headers: {
@@ -127,6 +217,78 @@ function App() {
     }
   };
 
+  const guardarTrabajadorEditado = async (event) => {
+    event.preventDefault();
+
+    if (!trabajadorEditando?.nombre.trim() || !trabajadorEditando?.codigo.trim()) {
+      setError("Escribe el nombre y el código del trabajador.");
+      return;
+    }
+
+    setGuardandoTrabajador(true);
+    setError("");
+
+    try {
+      const respuesta = await fetch(
+        `${API_BASE}/trabajadores/${trabajadorEditando.id}`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            nombre: trabajadorEditando.nombre.trim(),
+            codigo: trabajadorEditando.codigo.trim().toUpperCase(),
+          }),
+        },
+      );
+
+      const datos = await respuesta.json();
+
+      if (!respuesta.ok || !datos.ok) {
+        throw new Error(datos.error || "Error actualizando trabajador");
+      }
+
+      setTrabajadorEditando(null);
+      await cargarDatos();
+    } catch (error) {
+      console.error(error);
+      setError(error.message);
+    } finally {
+      setGuardandoTrabajador(false);
+    }
+  };
+
+  const cambiarActivoTrabajador = async (trabajador) => {
+    try {
+      setError("");
+
+      const respuesta = await fetch(
+        `${API_BASE}/trabajadores/${trabajador.id}/activo`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            activo: !normalizarActivo(trabajador.activo),
+          }),
+        },
+      );
+
+      const datos = await respuesta.json();
+
+      if (!respuesta.ok || !datos.ok) {
+        throw new Error(datos.error || "Error cambiando trabajador");
+      }
+
+      await cargarDatos();
+    } catch (error) {
+      console.error(error);
+      setError(error.message);
+    }
+  };
+
   // =========================================
   // CREAR CASA
   // =========================================
@@ -144,7 +306,7 @@ function App() {
 
     try {
       const respuesta = await fetch(
-        "http://localhost:3000/api/horarios/casas",
+        `${API_BASE}/casas`,
         {
           method: "POST",
           headers: {
@@ -180,6 +342,75 @@ function App() {
       setError(error.message);
     } finally {
       setGuardandoCasa(false);
+    }
+  };
+
+  const guardarCasaEditada = async (event) => {
+    event.preventDefault();
+
+    if (!casaEditando?.nombre.trim()) {
+      setError("Escribe el nombre de la casa.");
+      return;
+    }
+
+    setGuardandoCasa(true);
+    setError("");
+
+    try {
+      const respuesta = await fetch(`${API_BASE}/casas/${casaEditando.id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          nombre: casaEditando.nombre.trim(),
+          direccion: casaEditando.direccion?.trim() || null,
+          duracion_minutos: casaEditando.duracion_minutos
+            ? Number(casaEditando.duracion_minutos)
+            : null,
+        }),
+      });
+
+      const datos = await respuesta.json();
+
+      if (!respuesta.ok || !datos.ok) {
+        throw new Error(datos.error || "Error actualizando casa");
+      }
+
+      setCasaEditando(null);
+      await cargarDatos();
+    } catch (error) {
+      console.error(error);
+      setError(error.message);
+    } finally {
+      setGuardandoCasa(false);
+    }
+  };
+
+  const cambiarActivoCasa = async (casa) => {
+    try {
+      setError("");
+
+      const respuesta = await fetch(`${API_BASE}/casas/${casa.id}/activo`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          activo: !normalizarActivo(casa.activo),
+        }),
+      });
+
+      const datos = await respuesta.json();
+
+      if (!respuesta.ok || !datos.ok) {
+        throw new Error(datos.error || "Error cambiando casa");
+      }
+
+      await cargarDatos();
+    } catch (error) {
+      console.error(error);
+      setError(error.message);
     }
   };
 
@@ -220,7 +451,7 @@ function App() {
       formData.append("imagen", imagen);
 
       const respuesta = await fetch(
-        "http://localhost:3000/api/horarios/analizar",
+        `${API_BASE}/horarios/analizar`,
         {
           method: "POST",
           body: formData,
@@ -259,7 +490,7 @@ function App() {
       // ---------------------------------
 
       if (campo === "casa") {
-        const casaSeleccionada = casas.find(
+        const casaSeleccionada = casasActivas.find(
           (casa) => casa.id === Number(valor),
         );
 
@@ -302,7 +533,7 @@ function App() {
 
       const trabajadoresActualizados = [...servicio.trabajadores];
 
-      const trabajadorEncontrado = trabajadores.find(
+      const trabajadorEncontrado = trabajadoresActivos.find(
         (item) => item.codigo === codigo,
       );
 
@@ -444,7 +675,7 @@ function App() {
       }));
 
       const respuesta = await fetch(
-        "http://localhost:3000/api/horarios/guardar-completo",
+        `${API_BASE}/horarios/guardar-completo`,
         {
           method: "POST",
           headers: {
@@ -468,6 +699,7 @@ function App() {
         `Horario guardado correctamente.\n\n` +
           `Servicios guardados: ${datos.servicios_guardados}`,
       );
+      await cargarHistorial();
     } catch (error) {
       console.error(error);
       setError(error.message);
@@ -502,13 +734,18 @@ function App() {
         {!cargandoDatos && (
           <div className="datos-referencia">
             <div className="dato-box">
-              <span>Casas</span>
-              <strong>{casas.length}</strong>
+              <span>Casas activas</span>
+              <strong>{casasActivas.length}</strong>
             </div>
 
             <div className="dato-box">
-              <span>Trabajadores</span>
-              <strong>{trabajadores.length}</strong>
+              <span>Trabajadores activos</span>
+              <strong>{trabajadoresActivos.length}</strong>
+            </div>
+
+            <div className="dato-box">
+              <span>Días guardados</span>
+              <strong>{historial.length}</strong>
             </div>
           </div>
         )}
@@ -550,29 +787,79 @@ function App() {
                     </p>
                   ) : (
                     trabajadores.map((trabajador) => (
-                      <div className="item-gestion" key={trabajador.id}>
+                      <div
+                        className={`item-gestion ${
+                          normalizarActivo(trabajador.activo)
+                            ? ""
+                            : "item-inactivo"
+                        }`}
+                        key={trabajador.id}
+                      >
                         <div>
                           <strong>{trabajador.nombre}</strong>
-
                           <span>{trabajador.codigo}</span>
+                          <span>
+                            {normalizarActivo(trabajador.activo)
+                              ? "Activo"
+                              : "Inactivo"}
+                          </span>
+                        </div>
+
+                        <div className="item-acciones">
+                          <button
+                            type="button"
+                            className="btn-mini"
+                            onClick={() => setTrabajadorEditando(trabajador)}
+                          >
+                            Editar
+                          </button>
+
+                          <button
+                            type="button"
+                            className="btn-mini"
+                            onClick={() => cambiarActivoTrabajador(trabajador)}
+                          >
+                            {normalizarActivo(trabajador.activo)
+                              ? "Desactivar"
+                              : "Activar"}
+                          </button>
                         </div>
                       </div>
                     ))
                   )}
                 </div>
 
-                <form onSubmit={crearTrabajador}>
-                  <h4>Añadir trabajador</h4>
+                <form
+                  onSubmit={
+                    trabajadorEditando
+                      ? guardarTrabajadorEditado
+                      : crearTrabajador
+                  }
+                >
+                  <h4>
+                    {trabajadorEditando
+                      ? "Editar trabajador"
+                      : "Añadir trabajador"}
+                  </h4>
 
                   <input
                     type="text"
                     placeholder="Nombre"
-                    value={nuevoTrabajador.nombre}
+                    value={
+                      trabajadorEditando
+                        ? trabajadorEditando.nombre
+                        : nuevoTrabajador.nombre
+                    }
                     onChange={(event) =>
-                      setNuevoTrabajador({
-                        ...nuevoTrabajador,
-                        nombre: event.target.value,
-                      })
+                      trabajadorEditando
+                        ? setTrabajadorEditando({
+                            ...trabajadorEditando,
+                            nombre: event.target.value,
+                          })
+                        : setNuevoTrabajador({
+                            ...nuevoTrabajador,
+                            nombre: event.target.value,
+                          })
                     }
                   />
 
@@ -580,24 +867,47 @@ function App() {
                     type="text"
                     placeholder="Código"
                     maxLength="10"
-                    value={nuevoTrabajador.codigo}
+                    value={
+                      trabajadorEditando
+                        ? trabajadorEditando.codigo
+                        : nuevoTrabajador.codigo
+                    }
                     onChange={(event) =>
-                      setNuevoTrabajador({
-                        ...nuevoTrabajador,
-                        codigo: event.target.value.toUpperCase(),
-                      })
+                      trabajadorEditando
+                        ? setTrabajadorEditando({
+                            ...trabajadorEditando,
+                            codigo: event.target.value.toUpperCase(),
+                          })
+                        : setNuevoTrabajador({
+                            ...nuevoTrabajador,
+                            codigo: event.target.value.toUpperCase(),
+                          })
                     }
                   />
 
-                  <button
-                    type="submit"
-                    className="btn-primary"
-                    disabled={guardandoTrabajador}
-                  >
-                    {guardandoTrabajador
-                      ? "Guardando..."
-                      : "+ Añadir trabajador"}
-                  </button>
+                  <div className="form-actions">
+                    <button
+                      type="submit"
+                      className="btn-primary"
+                      disabled={guardandoTrabajador}
+                    >
+                      {guardandoTrabajador
+                        ? "Guardando..."
+                        : trabajadorEditando
+                          ? "Guardar cambios"
+                          : "+ Añadir trabajador"}
+                    </button>
+
+                    {trabajadorEditando && (
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={() => setTrabajadorEditando(null)}
+                      >
+                        Cancelar
+                      </button>
+                    )}
+                  </div>
                 </form>
               </div>
 
@@ -613,43 +923,89 @@ function App() {
                     <p className="gestion-vacio">No hay casas registradas.</p>
                   ) : (
                     casas.map((casa) => (
-                      <div className="item-gestion" key={casa.id}>
+                      <div
+                        className={`item-gestion ${
+                          normalizarActivo(casa.activo) ? "" : "item-inactivo"
+                        }`}
+                        key={casa.id}
+                      >
                         <div>
                           <strong>{casa.nombre}</strong>
+                          <span>{casa.duracion_minutos || "-"} min</span>
+                          <span>{casa.direccion || "Sin dirección"}</span>
+                          <span>
+                            {normalizarActivo(casa.activo)
+                              ? "Activa"
+                              : "Inactiva"}
+                          </span>
+                        </div>
 
-                          {casa.duracion_minutos && (
-                            <span>{casa.duracion_minutos} min</span>
-                          )}
+                        <div className="item-acciones">
+                          <button
+                            type="button"
+                            className="btn-mini"
+                            onClick={() =>
+                              setCasaEditando({
+                                ...casa,
+                                duracion_minutos:
+                                  casa.duracion_minutos?.toString() || "",
+                              })
+                            }
+                          >
+                            Editar
+                          </button>
+
+                          <button
+                            type="button"
+                            className="btn-mini"
+                            onClick={() => cambiarActivoCasa(casa)}
+                          >
+                            {normalizarActivo(casa.activo)
+                              ? "Desactivar"
+                              : "Activar"}
+                          </button>
                         </div>
                       </div>
                     ))
                   )}
                 </div>
 
-                <form onSubmit={crearCasa}>
-                  <h4>Añadir casa</h4>
+                <form onSubmit={casaEditando ? guardarCasaEditada : crearCasa}>
+                  <h4>{casaEditando ? "Editar casa" : "Añadir casa"}</h4>
 
                   <input
                     type="text"
                     placeholder="Nombre de la casa"
-                    value={nuevaCasa.nombre}
+                    value={casaEditando ? casaEditando.nombre : nuevaCasa.nombre}
                     onChange={(event) =>
-                      setNuevaCasa({
-                        ...nuevaCasa,
-                        nombre: event.target.value,
-                      })
+                      casaEditando
+                        ? setCasaEditando({
+                            ...casaEditando,
+                            nombre: event.target.value,
+                          })
+                        : setNuevaCasa({
+                            ...nuevaCasa,
+                            nombre: event.target.value,
+                          })
                     }
                   />
 
                   <input
                     type="text"
                     placeholder="Dirección (opcional)"
-                    value={nuevaCasa.direccion}
+                    value={
+                      casaEditando ? casaEditando.direccion || "" : nuevaCasa.direccion
+                    }
                     onChange={(event) =>
-                      setNuevaCasa({
-                        ...nuevaCasa,
-                        direccion: event.target.value,
-                      })
+                      casaEditando
+                        ? setCasaEditando({
+                            ...casaEditando,
+                            direccion: event.target.value,
+                          })
+                        : setNuevaCasa({
+                            ...nuevaCasa,
+                            direccion: event.target.value,
+                          })
                     }
                   />
 
@@ -657,23 +1013,137 @@ function App() {
                     type="number"
                     min="1"
                     placeholder="Duración base en minutos"
-                    value={nuevaCasa.duracion_minutos}
+                    value={
+                      casaEditando
+                        ? casaEditando.duracion_minutos || ""
+                        : nuevaCasa.duracion_minutos
+                    }
                     onChange={(event) =>
-                      setNuevaCasa({
-                        ...nuevaCasa,
-                        duracion_minutos: event.target.value,
-                      })
+                      casaEditando
+                        ? setCasaEditando({
+                            ...casaEditando,
+                            duracion_minutos: event.target.value,
+                          })
+                        : setNuevaCasa({
+                            ...nuevaCasa,
+                            duracion_minutos: event.target.value,
+                          })
                     }
                   />
 
-                  <button
-                    type="submit"
-                    className="btn-primary"
-                    disabled={guardandoCasa}
-                  >
-                    {guardandoCasa ? "Guardando..." : "+ Añadir casa"}
-                  </button>
+                  <div className="form-actions">
+                    <button
+                      type="submit"
+                      className="btn-primary"
+                      disabled={guardandoCasa}
+                    >
+                      {guardandoCasa
+                        ? "Guardando..."
+                        : casaEditando
+                          ? "Guardar cambios"
+                          : "+ Añadir casa"}
+                    </button>
+
+                    {casaEditando && (
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={() => setCasaEditando(null)}
+                      >
+                        Cancelar
+                      </button>
+                    )}
+                  </div>
                 </form>
+              </div>
+            </div>
+          )}
+        </section>
+
+        {/* ================================= */}
+        {/* HISTORIAL */}
+        {/* ================================= */}
+
+        <section className="card">
+          <div className="gestion-header">
+            <div>
+              <h2>Historial</h2>
+
+              <p>Consulta los horarios guardados sin modificarlos.</p>
+            </div>
+
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => setMostrarHistorial(!mostrarHistorial)}
+            >
+              {mostrarHistorial ? "Ocultar historial" : "Abrir historial"}
+            </button>
+          </div>
+
+          {mostrarHistorial && (
+            <div className="historial-layout">
+              <div className="historial-lista">
+                {cargandoHistorial && historial.length === 0 ? (
+                  <p className="gestion-vacio">Cargando historial...</p>
+                ) : historial.length === 0 ? (
+                  <p className="gestion-vacio">No hay horarios guardados.</p>
+                ) : (
+                  historial.map((dia) => (
+                    <button
+                      type="button"
+                      className={`historial-dia ${
+                        diaHistorial?.id === dia.id ? "seleccionado" : ""
+                      }`}
+                      key={dia.id}
+                      onClick={() => abrirDiaHistorial(dia.id)}
+                    >
+                      <strong>{formatearFecha(dia.fecha)}</strong>
+                      <span>{dia.total_servicios} servicios</span>
+                      <span>{dia.estado}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+
+              <div className="historial-detalle">
+                {!diaHistorial ? (
+                  <p className="gestion-vacio">Selecciona un día.</p>
+                ) : (
+                  <>
+                    <div className="historial-detalle-header">
+                      <h3>{formatearFecha(diaHistorial.fecha)}</h3>
+
+                      <span>{serviciosHistorial.length} servicios</span>
+                    </div>
+
+                    <div className="historial-servicios">
+                      {serviciosHistorial.map((servicio) => (
+                        <div className="historial-servicio" key={servicio.id}>
+                          <div>
+                            <strong>{servicio.casa}</strong>
+
+                            <span>
+                              {formatearHora(servicio.hora_inicio)} →{" "}
+                              {formatearHora(servicio.hora_fin)}
+                            </span>
+                          </div>
+
+                          <div className="trabajadores-celda">
+                            {servicio.trabajadores.map((trabajador) => (
+                              <span
+                                className="trabajador-tag"
+                                key={trabajador.id}
+                              >
+                                {trabajador.codigo}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           )}
@@ -810,7 +1280,7 @@ function App() {
                             </option>
                           )}
 
-                          {casas.map((casa) => (
+                          {casasActivas.map((casa) => (
                             <option key={casa.id} value={casa.id}>
                               {casa.nombre}
                             </option>
@@ -895,7 +1365,7 @@ function App() {
                                     </option>
                                   )}
 
-                                  {trabajadores.map((item) => (
+                                  {trabajadoresActivos.map((item) => (
                                     <option key={item.id} value={item.codigo}>
                                       {item.codigo}
                                       {" - "}

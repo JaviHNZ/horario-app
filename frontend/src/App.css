@@ -896,12 +896,23 @@ select {
   border-radius: 6px;
 }
 
+.item-gestion.item-inactivo {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
 .item-gestion div {
   display: flex;
   align-items: center;
   justify-content: space-between;
   width: 100%;
   gap: 15px;
+}
+
+.item-gestion .item-acciones {
+  width: auto;
+  justify-content: flex-end;
+  gap: 6px;
 }
 
 .item-gestion strong {
@@ -933,6 +944,129 @@ select {
   border-color: #6b7280;
 }
 
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.btn-mini {
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: white;
+  color: #374151;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.btn-mini:hover {
+  background: #f3f4f6;
+}
+
+.historial-layout {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 18px;
+  margin-top: 20px;
+}
+
+.historial-lista {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 440px;
+  overflow-y: auto;
+}
+
+.historial-dia {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 5px 10px;
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 7px;
+  background: white;
+  text-align: left;
+  cursor: pointer;
+}
+
+.historial-dia:hover,
+.historial-dia.seleccionado {
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+
+.historial-dia strong {
+  font-size: 14px;
+}
+
+.historial-dia span {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.historial-detalle {
+  min-height: 180px;
+  padding: 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f9fafb;
+}
+
+.historial-detalle-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.historial-detalle-header h3 {
+  margin: 0;
+}
+
+.historial-detalle-header span {
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.historial-servicios {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.historial-servicio {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 7px;
+  background: white;
+}
+
+.historial-servicio > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.historial-servicio strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.historial-servicio span {
+  color: #6b7280;
+  font-size: 13px;
+}
+
 @media (max-width: 800px) {
   .gestion-grid {
     grid-template-columns: 1fr;
@@ -940,6 +1074,15 @@ select {
 
   .gestion-header {
     align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .historial-layout,
+  .historial-servicios {
+    grid-template-columns: 1fr;
+  }
+
+  .historial-servicio {
     flex-direction: column;
   }
 }
