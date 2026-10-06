@@ -542,4 +542,168 @@ router.post("/guardar-completo", async (req, res) => {
     connection.release();
   }
 });
+// ============================================
+// CASAS
+// ============================================
+
+// Obtener todas las casas activas
+router.get("/casas", async (req, res) => {
+  try {
+    const [casas] = await pool.query(`
+      SELECT
+        id,
+        nombre,
+        direccion,
+        duracion_minutos,
+        activo
+      FROM casas
+      WHERE activo = TRUE
+      ORDER BY nombre ASC
+    `);
+
+    res.json({
+      ok: true,
+      casas,
+    });
+  } catch (error) {
+    console.error("Error obteniendo casas:", error);
+
+    res.status(500).json({
+      ok: false,
+      error: "Error obteniendo casas",
+    });
+  }
+});
+
+// Crear una casa
+router.post("/casas", async (req, res) => {
+  try {
+    const { nombre, direccion, duracion_minutos } = req.body;
+
+    if (!nombre || !nombre.trim()) {
+      return res.status(400).json({
+        ok: false,
+        error: "El nombre de la casa es obligatorio",
+      });
+    }
+
+    const [resultado] = await pool.query(
+      `
+      INSERT INTO casas (
+        nombre,
+        direccion,
+        duracion_minutos
+      )
+      VALUES (?, ?, ?)
+      `,
+      [nombre.trim(), direccion?.trim() || null, duracion_minutos || null],
+    );
+
+    res.status(201).json({
+      ok: true,
+      mensaje: "Casa creada correctamente",
+      casa_id: resultado.insertId,
+    });
+  } catch (error) {
+    console.error("Error creando casa:", error);
+
+    if (error.code === "ER_DUP_ENTRY") {
+      return res.status(409).json({
+        ok: false,
+        error: "Ya existe una casa con ese nombre",
+      });
+    }
+
+    res.status(500).json({
+      ok: false,
+      error: "Error creando casa",
+    });
+  }
+});
+
+// ============================================
+// TRABAJADORES
+// ============================================
+
+// Obtener todos los trabajadores activos
+router.get("/trabajadores", async (req, res) => {
+  try {
+    const [trabajadores] = await pool.query(`
+      SELECT
+        id,
+        nombre,
+        codigo,
+        activo
+      FROM trabajadores
+      WHERE activo = TRUE
+      ORDER BY nombre ASC
+    `);
+
+    res.json({
+      ok: true,
+      trabajadores,
+    });
+  } catch (error) {
+    console.error("Error obteniendo trabajadores:", error);
+
+    res.status(500).json({
+      ok: false,
+      error: "Error obteniendo trabajadores",
+    });
+  }
+});
+
+// Crear un trabajador
+router.post("/trabajadores", async (req, res) => {
+  try {
+    const { nombre, codigo } = req.body;
+
+    if (!nombre || !nombre.trim()) {
+      return res.status(400).json({
+        ok: false,
+        error: "El nombre del trabajador es obligatorio",
+      });
+    }
+
+    if (!codigo || !codigo.trim()) {
+      return res.status(400).json({
+        ok: false,
+        error: "El código del trabajador es obligatorio",
+      });
+    }
+
+    const codigoNormalizado = codigo.trim().toUpperCase();
+
+    const [resultado] = await pool.query(
+      `
+      INSERT INTO trabajadores (
+        nombre,
+        codigo
+      )
+      VALUES (?, ?)
+      `,
+      [nombre.trim(), codigoNormalizado],
+    );
+
+    res.status(201).json({
+      ok: true,
+      mensaje: "Trabajador creado correctamente",
+      trabajador_id: resultado.insertId,
+    });
+  } catch (error) {
+    console.error("Error creando trabajador:", error);
+
+    if (error.code === "ER_DUP_ENTRY") {
+      return res.status(409).json({
+        ok: false,
+        error: "Ya existe un trabajador con ese código",
+      });
+    }
+
+    res.status(500).json({
+      ok: false,
+      error: "Error creando trabajador",
+    });
+  }
+});
 module.exports = router;

@@ -13,6 +13,30 @@ function App() {
 
   const [editandoIndex, setEditandoIndex] = useState(null);
 
+  const [fecha, setFecha] = useState(new Date().toISOString().split("T")[0]);
+
+  const [guardando, setGuardando] = useState(false);
+
+  // =========================================
+  // GESTIÓN DE CASAS Y TRABAJADORES
+  // =========================================
+
+  const [mostrarGestion, setMostrarGestion] = useState(false);
+
+  const [nuevoTrabajador, setNuevoTrabajador] = useState({
+    nombre: "",
+    codigo: "",
+  });
+
+  const [nuevaCasa, setNuevaCasa] = useState({
+    nombre: "",
+    direccion: "",
+    duracion_minutos: "",
+  });
+
+  const [guardandoTrabajador, setGuardandoTrabajador] = useState(false);
+  const [guardandoCasa, setGuardandoCasa] = useState(false);
+
   // =========================================
   // CARGAR CASAS Y TRABAJADORES
   // =========================================
@@ -23,32 +47,139 @@ function App() {
 
   const cargarDatos = async () => {
     try {
+      setCargandoDatos(true);
+
       const [respuestaCasas, respuestaTrabajadores] = await Promise.all([
-        fetch("http://localhost:3000/api/casas"),
-        fetch("http://localhost:3000/api/trabajadores"),
+        fetch("http://localhost:3000/api/horarios/casas"),
+        fetch("http://localhost:3000/api/horarios/trabajadores"),
       ]);
 
       const datosCasas = await respuestaCasas.json();
-
       const datosTrabajadores = await respuestaTrabajadores.json();
 
-      if (!respuestaCasas.ok) {
+      if (!respuestaCasas.ok || !datosCasas.ok) {
         throw new Error("Error cargando casas");
       }
 
-      if (!respuestaTrabajadores.ok) {
+      if (!respuestaTrabajadores.ok || !datosTrabajadores.ok) {
         throw new Error("Error cargando trabajadores");
       }
 
       setCasas(datosCasas.casas || []);
-
       setTrabajadores(datosTrabajadores.trabajadores || []);
     } catch (error) {
       console.error(error);
-
       setError(error.message);
     } finally {
       setCargandoDatos(false);
+    }
+  };
+
+  // =========================================
+  // CREAR TRABAJADOR
+  // =========================================
+
+  const crearTrabajador = async (event) => {
+    event.preventDefault();
+
+    if (!nuevoTrabajador.nombre.trim() || !nuevoTrabajador.codigo.trim()) {
+      setError("Escribe el nombre y el código del trabajador.");
+      return;
+    }
+
+    setGuardandoTrabajador(true);
+    setError("");
+
+    try {
+      const respuesta = await fetch(
+        "http://localhost:3000/api/horarios/trabajadores",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            nombre: nuevoTrabajador.nombre.trim(),
+            codigo: nuevoTrabajador.codigo.trim().toUpperCase(),
+          }),
+        },
+      );
+
+      const datos = await respuesta.json();
+
+      if (!respuesta.ok || !datos.ok) {
+        throw new Error(datos.error || "Error creando trabajador");
+      }
+
+      setNuevoTrabajador({
+        nombre: "",
+        codigo: "",
+      });
+
+      await cargarDatos();
+
+      alert("Trabajador creado correctamente.");
+    } catch (error) {
+      console.error(error);
+      setError(error.message);
+    } finally {
+      setGuardandoTrabajador(false);
+    }
+  };
+
+  // =========================================
+  // CREAR CASA
+  // =========================================
+
+  const crearCasa = async (event) => {
+    event.preventDefault();
+
+    if (!nuevaCasa.nombre.trim()) {
+      setError("Escribe el nombre de la casa.");
+      return;
+    }
+
+    setGuardandoCasa(true);
+    setError("");
+
+    try {
+      const respuesta = await fetch(
+        "http://localhost:3000/api/horarios/casas",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            nombre: nuevaCasa.nombre.trim(),
+            direccion: nuevaCasa.direccion.trim() || null,
+            duracion_minutos: nuevaCasa.duracion_minutos
+              ? Number(nuevaCasa.duracion_minutos)
+              : null,
+          }),
+        },
+      );
+
+      const datos = await respuesta.json();
+
+      if (!respuesta.ok || !datos.ok) {
+        throw new Error(datos.error || "Error creando casa");
+      }
+
+      setNuevaCasa({
+        nombre: "",
+        direccion: "",
+        duracion_minutos: "",
+      });
+
+      await cargarDatos();
+
+      alert("Casa creada correctamente.");
+    } catch (error) {
+      console.error(error);
+      setError(error.message);
+    } finally {
+      setGuardandoCasa(false);
     }
   };
 
@@ -64,11 +195,8 @@ function App() {
     }
 
     setImagen(archivo);
-
     setResultado(null);
-
     setError("");
-
     setEditandoIndex(null);
   };
 
@@ -79,21 +207,16 @@ function App() {
   const analizarImagen = async () => {
     if (!imagen) {
       setError("Selecciona una imagen primero.");
-
       return;
     }
 
     setCargando(true);
-
     setError("");
-
     setResultado(null);
-
     setEditandoIndex(null);
 
     try {
       const formData = new FormData();
-
       formData.append("imagen", imagen);
 
       const respuesta = await fetch(
@@ -113,7 +236,6 @@ function App() {
       setResultado(datos);
     } catch (error) {
       console.error(error);
-
       setError(error.message);
     } finally {
       setCargando(false);
@@ -132,9 +254,9 @@ function App() {
         ...serviciosActualizados[index],
       };
 
-      // -------------------------------
+      // ---------------------------------
       // CAMBIAR CASA
-      // -------------------------------
+      // ---------------------------------
 
       if (campo === "casa") {
         const casaSeleccionada = casas.find(
@@ -144,17 +266,15 @@ function App() {
         if (casaSeleccionada) {
           servicio.casa = {
             nombre: casaSeleccionada.nombre,
-
             encontrada: true,
-
             datos: casaSeleccionada,
           };
         }
       }
 
-      // -------------------------------
-      // CAMBIAR OTROS CAMPOS
-      // -------------------------------
+      // ---------------------------------
+      // OTROS CAMPOS
+      // ---------------------------------
       else {
         servicio[campo] = valor;
       }
@@ -163,7 +283,6 @@ function App() {
 
       return {
         ...actual,
-
         servicios: serviciosActualizados,
       };
     });
@@ -193,7 +312,6 @@ function App() {
 
       trabajadoresActualizados[trabajadorIndex] = {
         encontrado: true,
-
         trabajador: trabajadorEncontrado,
       };
 
@@ -203,7 +321,6 @@ function App() {
 
       return {
         ...actual,
-
         servicios: serviciosActualizados,
       };
     });
@@ -223,7 +340,6 @@ function App() {
 
       servicio.trabajadores = [
         ...servicio.trabajadores,
-
         {
           encontrado: false,
           codigo: "",
@@ -234,7 +350,6 @@ function App() {
 
       return {
         ...actual,
-
         servicios: serviciosActualizados,
       };
     });
@@ -260,14 +375,13 @@ function App() {
 
       return {
         ...actual,
-
         servicios: serviciosActualizados,
       };
     });
   };
 
   // =========================================
-  // COMPROBAR SI UN SERVICIO TIENE ERRORES
+  // COMPROBAR ERRORES
   // =========================================
 
   const servicioTieneErrores = (servicio) => {
@@ -294,6 +408,75 @@ function App() {
   };
 
   // =========================================
+  // GUARDAR HORARIO COMPLETO
+  // =========================================
+
+  const guardarHorario = async () => {
+    if (!resultado || !resultado.servicios.length) {
+      setError("No hay servicios para guardar.");
+      return;
+    }
+
+    const errores = resultado.servicios.filter(servicioTieneErrores);
+
+    if (errores.length > 0) {
+      setError(`Hay ${errores.length} servicios pendientes de revisar.`);
+      return;
+    }
+
+    if (!fecha) {
+      setError("Selecciona una fecha.");
+      return;
+    }
+
+    setGuardando(true);
+    setError("");
+
+    try {
+      const serviciosParaGuardar = resultado.servicios.map((servicio) => ({
+        casa_id: servicio.casa.datos.id,
+        casa: servicio.casa.nombre,
+        hora_inicio: servicio.hora_inicio,
+        hora_fin: servicio.hora_fin,
+        trabajadores: servicio.trabajadores.map(
+          (trabajador) => trabajador.trabajador.id,
+        ),
+      }));
+
+      const respuesta = await fetch(
+        "http://localhost:3000/api/horarios/guardar-completo",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            fecha,
+            imagen_original: imagen?.name || null,
+            servicios: serviciosParaGuardar,
+          }),
+        },
+      );
+
+      const datos = await respuesta.json();
+
+      if (!respuesta.ok || !datos.ok) {
+        throw new Error(datos.error || "Error guardando el horario");
+      }
+
+      alert(
+        `Horario guardado correctamente.\n\n` +
+          `Servicios guardados: ${datos.servicios_guardados}`,
+      );
+    } catch (error) {
+      console.error(error);
+      setError(error.message);
+    } finally {
+      setGuardando(false);
+    }
+  };
+
+  // =========================================
   // RENDER
   // =========================================
 
@@ -313,27 +496,191 @@ function App() {
 
       <main className="container">
         {/* ================================= */}
-        {/* DATOS DE REFERENCIA */}
+        {/* DATOS */}
         {/* ================================= */}
 
         {!cargandoDatos && (
           <div className="datos-referencia">
             <div className="dato-box">
               <span>Casas</span>
-
               <strong>{casas.length}</strong>
             </div>
 
             <div className="dato-box">
               <span>Trabajadores</span>
-
               <strong>{trabajadores.length}</strong>
             </div>
           </div>
         )}
 
         {/* ================================= */}
-        {/* SUBIR IMAGEN */}
+        {/* GESTIÓN */}
+        {/* ================================= */}
+
+        <section className="card">
+          <div className="gestion-header">
+            <div>
+              <h2>⚙️ Gestión</h2>
+
+              <p>Administra las casas y trabajadores registrados.</p>
+            </div>
+
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => setMostrarGestion(!mostrarGestion)}
+            >
+              {mostrarGestion ? "Ocultar gestión" : "Abrir gestión"}
+            </button>
+          </div>
+
+          {mostrarGestion && (
+            <div className="gestion-grid">
+              {/* ============================== */}
+              {/* TRABAJADORES */}
+              {/* ============================== */}
+
+              <div className="gestion-box">
+                <h3>👥 Trabajadores</h3>
+
+                <div className="lista-gestion">
+                  {trabajadores.length === 0 ? (
+                    <p className="gestion-vacio">
+                      No hay trabajadores registrados.
+                    </p>
+                  ) : (
+                    trabajadores.map((trabajador) => (
+                      <div className="item-gestion" key={trabajador.id}>
+                        <div>
+                          <strong>{trabajador.nombre}</strong>
+
+                          <span>{trabajador.codigo}</span>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <form onSubmit={crearTrabajador}>
+                  <h4>Añadir trabajador</h4>
+
+                  <input
+                    type="text"
+                    placeholder="Nombre"
+                    value={nuevoTrabajador.nombre}
+                    onChange={(event) =>
+                      setNuevoTrabajador({
+                        ...nuevoTrabajador,
+                        nombre: event.target.value,
+                      })
+                    }
+                  />
+
+                  <input
+                    type="text"
+                    placeholder="Código"
+                    maxLength="10"
+                    value={nuevoTrabajador.codigo}
+                    onChange={(event) =>
+                      setNuevoTrabajador({
+                        ...nuevoTrabajador,
+                        codigo: event.target.value.toUpperCase(),
+                      })
+                    }
+                  />
+
+                  <button
+                    type="submit"
+                    className="btn-primary"
+                    disabled={guardandoTrabajador}
+                  >
+                    {guardandoTrabajador
+                      ? "Guardando..."
+                      : "+ Añadir trabajador"}
+                  </button>
+                </form>
+              </div>
+
+              {/* ============================== */}
+              {/* CASAS */}
+              {/* ============================== */}
+
+              <div className="gestion-box">
+                <h3>🏠 Casas</h3>
+
+                <div className="lista-gestion">
+                  {casas.length === 0 ? (
+                    <p className="gestion-vacio">No hay casas registradas.</p>
+                  ) : (
+                    casas.map((casa) => (
+                      <div className="item-gestion" key={casa.id}>
+                        <div>
+                          <strong>{casa.nombre}</strong>
+
+                          {casa.duracion_minutos && (
+                            <span>{casa.duracion_minutos} min</span>
+                          )}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <form onSubmit={crearCasa}>
+                  <h4>Añadir casa</h4>
+
+                  <input
+                    type="text"
+                    placeholder="Nombre de la casa"
+                    value={nuevaCasa.nombre}
+                    onChange={(event) =>
+                      setNuevaCasa({
+                        ...nuevaCasa,
+                        nombre: event.target.value,
+                      })
+                    }
+                  />
+
+                  <input
+                    type="text"
+                    placeholder="Dirección (opcional)"
+                    value={nuevaCasa.direccion}
+                    onChange={(event) =>
+                      setNuevaCasa({
+                        ...nuevaCasa,
+                        direccion: event.target.value,
+                      })
+                    }
+                  />
+
+                  <input
+                    type="number"
+                    min="1"
+                    placeholder="Duración base en minutos"
+                    value={nuevaCasa.duracion_minutos}
+                    onChange={(event) =>
+                      setNuevaCasa({
+                        ...nuevaCasa,
+                        duracion_minutos: event.target.value,
+                      })
+                    }
+                  />
+
+                  <button
+                    type="submit"
+                    className="btn-primary"
+                    disabled={guardandoCasa}
+                  >
+                    {guardandoCasa ? "Guardando..." : "+ Añadir casa"}
+                  </button>
+                </form>
+              </div>
+            </div>
+          )}
+        </section>
+
+        {/* ================================= */}
+        {/* ANALIZAR */}
         {/* ================================= */}
 
         <section className="card">
@@ -361,7 +708,6 @@ function App() {
           {imagen && (
             <div className="archivo">
               <strong>Imagen:</strong>
-
               <span>{imagen.name}</span>
             </div>
           )}
@@ -390,22 +736,37 @@ function App() {
                 <p>{resultado.servicios.length} servicios detectados</p>
               </div>
 
-              <div
-                className={
-                  contarErrores() > 0
-                    ? "resumen-estado pendiente"
-                    : "resumen-estado correcto"
-                }
-              >
-                {contarErrores() > 0
-                  ? `${contarErrores()} pendientes`
-                  : "✓ Todo correcto"}
+              <div className="guardar-panel">
+                <label>Fecha</label>
+
+                <input
+                  type="date"
+                  value={fecha}
+                  onChange={(event) => setFecha(event.target.value)}
+                />
+
+                <div
+                  className={
+                    contarErrores() > 0
+                      ? "resumen-estado pendiente"
+                      : "resumen-estado correcto"
+                  }
+                >
+                  {contarErrores() > 0
+                    ? `${contarErrores()} pendientes`
+                    : "✓ Todo correcto"}
+                </div>
+
+                <button
+                  type="button"
+                  className="btn-guardar-horario"
+                  onClick={guardarHorario}
+                  disabled={guardando || contarErrores() > 0}
+                >
+                  {guardando ? "Guardando..." : "💾 Guardar horario"}
+                </button>
               </div>
             </div>
-
-            {/* ================================= */}
-            {/* GRID DE SERVICIOS */}
-            {/* ================================= */}
 
             <div className="tabla-horarios">
               {resultado.servicios.map((servicio, index) => {
@@ -414,7 +775,7 @@ function App() {
                 const tieneErrores = servicioTieneErrores(servicio);
 
                 // =================================
-                // MODO EDICIÓN
+                // EDICIÓN
                 // =================================
 
                 if (estaEditando) {
@@ -566,7 +927,7 @@ function App() {
                         </button>
                       </div>
 
-                      {/* BOTÓN LISTO */}
+                      {/* LISTO */}
 
                       <div className="acciones">
                         <button
@@ -582,7 +943,7 @@ function App() {
                 }
 
                 // =================================
-                // MODO NORMAL
+                // VISTA NORMAL
                 // =================================
 
                 return (
