@@ -181,19 +181,16 @@ function App() {
     setError("");
 
     try {
-      const respuesta = await fetch(
-        `${API_BASE}/trabajadores`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            nombre: nuevoTrabajador.nombre.trim(),
-            codigo: nuevoTrabajador.codigo.trim().toUpperCase(),
-          }),
+      const respuesta = await fetch(`${API_BASE}/trabajadores`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
         },
-      );
+        body: JSON.stringify({
+          nombre: nuevoTrabajador.nombre.trim(),
+          codigo: nuevoTrabajador.codigo.trim().toUpperCase(),
+        }),
+      });
 
       const datos = await respuesta.json();
 
@@ -220,7 +217,10 @@ function App() {
   const guardarTrabajadorEditado = async (event) => {
     event.preventDefault();
 
-    if (!trabajadorEditando?.nombre.trim() || !trabajadorEditando?.codigo.trim()) {
+    if (
+      !trabajadorEditando?.nombre.trim() ||
+      !trabajadorEditando?.codigo.trim()
+    ) {
       setError("Escribe el nombre y el código del trabajador.");
       return;
     }
@@ -305,22 +305,19 @@ function App() {
     setError("");
 
     try {
-      const respuesta = await fetch(
-        `${API_BASE}/casas`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            nombre: nuevaCasa.nombre.trim(),
-            direccion: nuevaCasa.direccion.trim() || null,
-            duracion_minutos: nuevaCasa.duracion_minutos
-              ? Number(nuevaCasa.duracion_minutos)
-              : null,
-          }),
+      const respuesta = await fetch(`${API_BASE}/casas`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
         },
-      );
+        body: JSON.stringify({
+          nombre: nuevaCasa.nombre.trim(),
+          direccion: nuevaCasa.direccion.trim() || null,
+          duracion_minutos: nuevaCasa.duracion_minutos
+            ? Number(nuevaCasa.duracion_minutos)
+            : null,
+        }),
+      });
 
       const datos = await respuesta.json();
 
@@ -450,13 +447,10 @@ function App() {
       const formData = new FormData();
       formData.append("imagen", imagen);
 
-      const respuesta = await fetch(
-        `${API_BASE}/horarios/analizar`,
-        {
-          method: "POST",
-          body: formData,
-        },
-      );
+      const respuesta = await fetch(`${API_BASE}/horarios/analizar`, {
+        method: "POST",
+        body: formData,
+      });
 
       const datos = await respuesta.json();
 
@@ -674,20 +668,17 @@ function App() {
         ),
       }));
 
-      const respuesta = await fetch(
-        `${API_BASE}/horarios/guardar-completo`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            fecha,
-            imagen_original: imagen?.name || null,
-            servicios: serviciosParaGuardar,
-          }),
+      const respuesta = await fetch(`${API_BASE}/horarios/guardar-completo`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
         },
-      );
+        body: JSON.stringify({
+          fecha,
+          imagen_original: imagen?.name || null,
+          servicios: serviciosParaGuardar,
+        }),
+      });
 
       const datos = await respuesta.json();
 
@@ -976,7 +967,9 @@ function App() {
                   <input
                     type="text"
                     placeholder="Nombre de la casa"
-                    value={casaEditando ? casaEditando.nombre : nuevaCasa.nombre}
+                    value={
+                      casaEditando ? casaEditando.nombre : nuevaCasa.nombre
+                    }
                     onChange={(event) =>
                       casaEditando
                         ? setCasaEditando({
@@ -994,7 +987,9 @@ function App() {
                     type="text"
                     placeholder="Dirección (opcional)"
                     value={
-                      casaEditando ? casaEditando.direccion || "" : nuevaCasa.direccion
+                      casaEditando
+                        ? casaEditando.direccion || ""
+                        : nuevaCasa.direccion
                     }
                     onChange={(event) =>
                       casaEditando
