@@ -35,9 +35,46 @@ router.post("/analizar", upload.single("imagen"), async (req, res) => {
     // 1. Analizar imagen con Gemini
     // -----------------------------------------
 
+    // -----------------------------------------
+    // 1.1. Obtener casas y trabajadores activos desde MySQL
+    // -----------------------------------------
+
+    const [casasActivas] = await pool.query(
+      `
+      SELECT nombre
+      FROM casas
+      WHERE activo = TRUE
+      ORDER BY nombre ASC
+      `,
+    );
+
+    const [trabajadoresActivos] = await pool.query(
+      `
+      SELECT codigo
+      FROM trabajadores
+      WHERE activo = TRUE
+      ORDER BY CHAR_LENGTH(codigo) DESC, codigo ASC
+      `,
+    );
+
+    const casas = casasActivas.map((casa) => casa.nombre);
+    const trabajadores = trabajadoresActivos.map(
+      (trabajador) => trabajador.codigo,
+    );
+
+    if (casas.length === 0 || trabajadores.length === 0) {
+      return res.status(400).json({
+        ok: false,
+        error:
+          "No hay casas o trabajadores activos en la base de datos para analizar el horario",
+      });
+    }
+
     const resultadoGemini = await analizarHorario(
       req.file.path,
       req.file.mimetype,
+      casas,
+      trabajadores,
     );
 
     // -----------------------------------------

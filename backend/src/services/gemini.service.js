@@ -1,21 +1,18 @@
 const { GoogleGenAI } = require("@google/genai");
 const fs = require("fs");
-const { response } = require("../app");
-
-// reglas que no tiene que romper
-const casas = require("../data/casas");
-const trabajadores = require("../data/trabajadores");
-// 
 
 const ai = new GoogleGenAI({
   apiKey: process.env.GOOGLE_API_KEY,
 });
 
-async function analizarHorario(rutaImagen, mimeType) {
+async function analizarHorario(rutaImagen, mimeType, casas, trabajadores) {
   const imagenData = fs.readFileSync(rutaImagen);
   const base64Image = imagenData.toString("base64");
 
-const prompt = `
+  const listaCasas = Array.isArray(casas) ? casas : [];
+  const listaTrabajadores = Array.isArray(trabajadores) ? trabajadores : [];
+
+  const prompt = `
 Analiza cuidadosamente esta imagen de un horario de trabajo escrito a mano.
 
 La imagen contiene diferentes servicios. Cada servicio normalmente tiene:
@@ -26,11 +23,11 @@ La imagen contiene diferentes servicios. Cada servicio normalmente tiene:
 
 LISTA DE CASAS VÁLIDAS:
 
-${casas.join(", ")}
+${listaCasas.join(", ")}
 
 LISTA DE CÓDIGOS DE TRABAJADORES VÁLIDOS:
 
-${trabajadores.join(", ")}
+${listaTrabajadores.join(", ")}
 
 REGLAS IMPORTANTES:
 
@@ -46,6 +43,7 @@ REGLAS IMPORTANTES:
 10. Si no puedes determinar una casa con suficiente seguridad, utiliza null.
 11. Si no puedes determinar un trabajador con suficiente seguridad, no lo inventes.
 12. Extrae TODOS los servicios visibles en la imagen.
+13. Los códigos de trabajadores son atómicos: "JE" es un único código y nunca debe dividirse en "J" y "E". No dividas códigos de varios caracteres en letras individuales.
 
 Devuelve exclusivamente un JSON válido.
 
@@ -62,9 +60,9 @@ Formato obligatorio:
   ]
 }
 `;
+
   const response = await ai.models.generateContent({
-  //  model: "gemini-3.8-flash",
- model: "gemini-3.5-flash-lite",
+    model: "gemini-3.5-flash-lite",
     contents: {
       role: "user",
       parts: [
@@ -76,13 +74,14 @@ Formato obligatorio:
         },
         { text: prompt },
       ],
-      config: {
-        responseMimeType: "application/json",
-      },
+    },
+    config: {
+      responseMimeType: "application/json",
     },
   });
+
   console.log("RESPUESTA DE GEMINI:");
-console.log(response.text);
+  console.log(response.text);
 
   let texto = response.text.trim();
 
