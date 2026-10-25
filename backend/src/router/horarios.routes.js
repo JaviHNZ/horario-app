@@ -10,6 +10,16 @@ const upload = multer({
   dest: "uploads/",
 });
 
+function normalizarTrabajadoresHistorial(valor) {
+  const trabajadores = typeof valor === "string" ? JSON.parse(valor) : valor;
+
+  if (!Array.isArray(trabajadores)) {
+    return [];
+  }
+
+  return trabajadores.filter((trabajador) => trabajador.id !== null);
+}
+
 router.post("/analizar", upload.single("imagen"), async (req, res) => {
   try {
     if (!req.file) {
@@ -540,6 +550,130 @@ router.post("/guardar-completo", async (req, res) => {
     });
   } finally {
     connection.release();
+  }
+});
+
+// ============================================
+// HISTORIAL
+// ============================================
+
+router.get("/historial", async (req, res) => {
+  try {
+    const [dias] = await pool.query(`
+      SELECT
+        d.id,
+        d.fecha,
+        d.nombre_archivo,
+        d.imagen_path,
+        d.estado,
+        d.fecha_creacion,
+        COUNT(h.id) AS total_servicios
+      FROM dias d
+      LEFT JOIN horarios h ON h.dia_id = d.id
+      GROUP BY
+        d.id,
+        d.fecha,
+        d.nombre_archivo,
+        d.imagen_path,
+        d.estado,
+        d.fecha_creacion
+      ORDER BY d.fecha DESC, d.id DESC
+    `);
+
+    res.json({
+      ok: true,
+      dias,
+    });
+  } catch (error) {
+    console.error("Error obteniendo historial:", error);
+
+    res.status(500).json({
+      ok: false,
+      error: "Error obteniendo historial",
+    });
+  }
+});
+
+router.get("/historial/:diaId", async (req, res) => {
+  try {
+    const { diaId } = req.params;
+
+    const [dias] = await pool.query(
+      `
+      SELECT
+        id,
+        fecha,
+        nombre_archivo,
+        imagen_path,
+        estado,
+        fecha_creacion
+      FROM dias
+      WHERE id = ?
+      `,
+      [diaId],
+    );
+
+    if (dias.length === 0) {
+      return res.status(404).json({
+        ok: false,
+        error: "Día no encontrado",
+      });
+    }
+
+    const [servicios] = await pool.query(
+      `
+      SELECT
+        h.id,
+        h.hora_inicio,
+        h.hora_fin,
+        c.id AS casa_id,
+        c.nombre AS casa,
+        c.direccion,
+        c.duracion_minutos,
+        COALESCE(
+          JSON_ARRAYAGG(
+            JSON_OBJECT(
+              'id', t.id,
+              'nombre', t.nombre,
+              'codigo', t.codigo,
+              'activo', t.activo
+            )
+          ),
+          JSON_ARRAY()
+        ) AS trabajadores
+      FROM horarios h
+      INNER JOIN casas c ON c.id = h.casa_id
+      LEFT JOIN horario_trabajadores ht ON ht.horario_id = h.id
+      LEFT JOIN trabajadores t ON t.id = ht.trabajador_id
+      WHERE h.dia_id = ?
+      GROUP BY
+        h.id,
+        h.hora_inicio,
+        h.hora_fin,
+        c.id,
+        c.nombre,
+        c.direccion,
+        c.duracion_minutos
+      ORDER BY h.hora_inicio ASC, c.nombre ASC
+      `,
+      [diaId],
+    );
+
+    res.json({
+      ok: true,
+      dia: dias[0],
+      servicios: servicios.map((servicio) => ({
+        ...servicio,
+        trabajadores: normalizarTrabajadoresHistorial(servicio.trabajadores),
+      })),
+    });
+  } catch (error) {
+    console.error("Error obteniendo detalle de historial:", error);
+
+    res.status(500).json({
+      ok: false,
+      error: "Error obteniendo detalle de historial",
+    });
   }
 });
 // ============================================
