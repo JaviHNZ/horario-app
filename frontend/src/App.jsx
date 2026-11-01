@@ -1,9 +1,152 @@
 import { useEffect, useMemo, useState } from "react";
+import {
+  Link,
+  Navigate,
+  Outlet,
+  Route,
+  Routes,
+  useLocation,
+} from "react-router-dom";
+import TrabajadoresView from "./TrabajadoresView";
+import FacturasView from "./FacturasView";
+import FacturaDetalleView from "./FacturaDetalleView";
 import "./App.css";
 
 const API_BASE = "http://localhost:3000/api";
 
 const normalizarActivo = (valor) => valor === true || valor === 1;
+
+const MINUTOS_POR_HORA = 60;
+
+// Convierte minutos (valor almacenado en MySQL) a un texto editable en horas.
+const minutosAHorasInput = (minutos) => {
+  if (minutos === null || minutos === undefined || minutos === "") {
+    return "";
+  }
+
+  const total = Number(minutos);
+
+  if (!Number.isFinite(total) || total <= 0) {
+    return "";
+  }
+
+  const horas = Math.round((total / MINUTOS_POR_HORA) * 100) / 100;
+
+  return Number.isInteger(horas)
+    ? String(horas)
+    : horas.toFixed(2).replace(/0+$/, "").replace(/\.$/, "").replace(".", ",");
+};
+
+// Convierte horas escritas por el usuario (coma o punto) a minutos enteros.
+// Devuelve { minutos: null } si el campo está vacío y { error } si no es válido.
+const parsearHorasAMinutos = (texto) => {
+  const limpio = String(texto ?? "").trim().replace(",", ".");
+
+  if (!limpio) {
+    return { minutos: null };
+  }
+
+  if (!/^\d+(?:\.\d+)?$/.test(limpio)) {
+    return {
+      error:
+        "Introduce una duración válida en horas (por ejemplo: 4 o 1,5).",
+    };
+  }
+
+  const horas = Number(limpio);
+
+  if (!Number.isFinite(horas) || horas <= 0) {
+    return {
+      error: "La duración habitual debe ser mayor que cero.",
+    };
+  }
+
+  const minutos = Math.round(horas * MINUTOS_POR_HORA);
+
+  if (minutos <= 0) {
+    return {
+      error: "La duración habitual debe ser mayor que cero.",
+    };
+  }
+
+  return { minutos };
+};
+
+// Texto que se muestra en el listado de casas, siempre en horas.
+const formatearDuracionHoras = (minutos) => {
+  if (minutos === null || minutos === undefined || minutos === "") {
+    return "Sin duración";
+  }
+
+  const total = Number(minutos);
+
+  if (!Number.isFinite(total) || total <= 0) {
+    return "Sin duración";
+  }
+
+  // Duraciones inferiores a una hora se muestran en minutos para no perder claridad.
+  if (total < MINUTOS_POR_HORA) {
+    return `${Math.round(total)} min`;
+  }
+
+  return `${minutosAHorasInput(total)} h`;
+};
+
+// Tipos de punto de servicio admitidos por el backend.
+const TIPOS_SERVICIO = [
+  { valor: "vivienda", etiqueta: "Vivienda" },
+  { valor: "escalera", etiqueta: "Escalera" },
+  { valor: "empresa", etiqueta: "Empresa" },
+  { valor: "piscina", etiqueta: "Piscina" },
+  { valor: "local", etiqueta: "Local" },
+  { valor: "otro", etiqueta: "Otro" },
+];
+
+const CASA_FORM_VACIA = {
+  nombre: "",
+  nombre_cliente: "",
+  apellidos_cliente: "",
+  direccion: "",
+  contacto: "",
+  codigo_postal: "",
+  poblacion: "",
+  tipo: "",
+  frecuencia_texto: "",
+  visitas_por_periodo: "",
+  periodo_dias: "",
+  precio_hora: "",
+  duracion_minutos: "",
+  emite_factura: false,
+  observaciones: "",
+};
+
+const TRABAJADOR_FORM_VACIO = {
+  nombre: "",
+  apellidos: "",
+  codigo: "",
+  contacto: "",
+  direccion: "",
+  poblacion: "",
+};
+
+const nombreCompletoTrabajador = (trabajador) =>
+  [trabajador.nombre, trabajador.apellidos].filter(Boolean).join(" ");
+
+// Convierte una casa de la API al formulario editable (duración en horas).
+const casaAFormulario = (casa) => {
+  const formulario = { ...CASA_FORM_VACIA };
+
+  for (const campo of Object.keys(CASA_FORM_VACIA)) {
+    if (casa[campo] !== null && casa[campo] !== undefined) {
+      formulario[campo] = casa[campo];
+    }
+  }
+
+  formulario.duracion_minutos = minutosAHorasInput(casa.duracion_minutos);
+  formulario.emite_factura = normalizarActivo(casa.emite_factura);
+
+  return formulario;
+};
 
 const formatearFecha = (fecha) => {
   if (!fecha) {
@@ -26,11 +169,27 @@ const formatearHora = (hora) => {
   return String(hora).slice(0, 5);
 };
 
-function App() {
+function HorariosView() {
+  const location = useLocation();
+
+  // La sección se deduce de la URL. Al mantener esta vista montada para las
+  // tres rutas, el estado del análisis y de la revisión no se pierde al
+  // navegar entre Horarios, Gestión e Historial.
+  const seccion =
+    location.pathname === "/gestion"
+      ? "gestion"
+      : location.pathname === "/historial"
+        ? "historial"
+        : "horarios";
+
   const [imagen, setImagen] = useState(null);
   const [cargando, setCargando] = useState(false);
   const [resultado, setResultado] = useState(null);
   const [error, setError] = useState("");
+
+  // Pestaña activa de la sección de horarios: "analizar" o "revisar".
+  // Es solo estado de interfaz: cambiar de pestaña no vuelve a llamar a Gemini.
+  const [pestanaHorario, setPestanaHorario] = useState("analizar");
 
   const [casas, setCasas] = useState([]);
   const [trabajadores, setTrabajadores] = useState([]);
@@ -46,26 +205,26 @@ function App() {
   // GESTIÓN DE CASAS Y TRABAJADORES
   // =========================================
 
-  const [mostrarGestion, setMostrarGestion] = useState(false);
+  // Pestaña secundaria de Gestión: "casas" o "trabajadores".
+  const [pestanaGestion, setPestanaGestion] = useState("casas");
 
   const [nuevoTrabajador, setNuevoTrabajador] = useState({
-    nombre: "",
-    codigo: "",
+    ...TRABAJADOR_FORM_VACIO,
   });
 
-  const [nuevaCasa, setNuevaCasa] = useState({
-    nombre: "",
-    direccion: "",
-    duracion_minutos: "",
-  });
+  const [nuevaCasa, setNuevaCasa] = useState({ ...CASA_FORM_VACIA });
 
   const [trabajadorEditando, setTrabajadorEditando] = useState(null);
   const [casaEditando, setCasaEditando] = useState(null);
 
   const [guardandoTrabajador, setGuardandoTrabajador] = useState(false);
   const [guardandoCasa, setGuardandoCasa] = useState(false);
+  const [errorDuracionCasa, setErrorDuracionCasa] = useState("");
 
-  const [mostrarHistorial, setMostrarHistorial] = useState(false);
+  const [busquedaCasa, setBusquedaCasa] = useState("");
+  const [soloPendientes, setSoloPendientes] = useState(false);
+  const [busquedaTrabajador, setBusquedaTrabajador] = useState("");
+
   const [historial, setHistorial] = useState([]);
   const [diaHistorial, setDiaHistorial] = useState(null);
   const [serviciosHistorial, setServiciosHistorial] = useState([]);
@@ -81,6 +240,72 @@ function App() {
       trabajadores.filter((trabajador) => normalizarActivo(trabajador.activo)),
     [trabajadores],
   );
+
+  const casasFiltradas = useMemo(() => {
+    const termino = busquedaCasa.trim().toLowerCase();
+
+    return casas.filter((casa) => {
+      if (soloPendientes && !normalizarActivo(casa.datos_pendientes)) {
+        return false;
+      }
+
+      if (!termino) {
+        return true;
+      }
+
+      return [
+        casa.nombre,
+        casa.nombre_cliente,
+        casa.apellidos_cliente,
+        casa.direccion,
+        casa.poblacion,
+      ]
+        .filter(Boolean)
+        .some((valor) => String(valor).toLowerCase().includes(termino));
+    });
+  }, [casas, busquedaCasa, soloPendientes]);
+
+  const casasPendientes = useMemo(
+    () => casas.filter((casa) => normalizarActivo(casa.datos_pendientes)).length,
+    [casas],
+  );
+
+  const trabajadoresFiltrados = useMemo(() => {
+    const termino = busquedaTrabajador.trim().toLowerCase();
+
+    if (!termino) {
+      return trabajadores;
+    }
+
+    return trabajadores.filter((trabajador) =>
+      [trabajador.nombre, trabajador.apellidos, trabajador.codigo]
+        .filter(Boolean)
+        .some((valor) => String(valor).toLowerCase().includes(termino)),
+    );
+  }, [trabajadores, busquedaTrabajador]);
+
+  const trabajadoresPendientes = useMemo(
+    () =>
+      trabajadores.filter((trabajador) =>
+        normalizarActivo(trabajador.datos_pendientes),
+      ).length,
+    [trabajadores],
+  );
+
+  // URL temporal para la vista previa de la imagen seleccionada. Se libera
+  // cuando cambia la imagen o se desmonta la vista para no acumular memoria.
+  const vistaPrevia = useMemo(
+    () => (imagen ? URL.createObjectURL(imagen) : ""),
+    [imagen],
+  );
+
+  useEffect(() => {
+    if (!vistaPrevia) {
+      return undefined;
+    }
+
+    return () => URL.revokeObjectURL(vistaPrevia);
+  }, [vistaPrevia]);
 
   // =========================================
   // CARGAR CASAS Y TRABAJADORES
@@ -169,6 +394,23 @@ function App() {
   // CREAR TRABAJADOR
   // =========================================
 
+  const construirPayloadTrabajador = (formulario) => ({
+    nombre: formulario.nombre.trim(),
+    apellidos: formulario.apellidos.trim() || null,
+    codigo: formulario.codigo.trim().toUpperCase(),
+    contacto: formulario.contacto.trim() || null,
+    direccion: formulario.direccion.trim() || null,
+    poblacion: formulario.poblacion.trim() || null,
+  });
+
+  const cambiarCampoTrabajador = (campo, valor) => {
+    if (trabajadorEditando) {
+      setTrabajadorEditando({ ...trabajadorEditando, [campo]: valor });
+    } else {
+      setNuevoTrabajador({ ...nuevoTrabajador, [campo]: valor });
+    }
+  };
+
   const crearTrabajador = async (event) => {
     event.preventDefault();
 
@@ -186,10 +428,7 @@ function App() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          nombre: nuevoTrabajador.nombre.trim(),
-          codigo: nuevoTrabajador.codigo.trim().toUpperCase(),
-        }),
+        body: JSON.stringify(construirPayloadTrabajador(nuevoTrabajador)),
       });
 
       const datos = await respuesta.json();
@@ -198,10 +437,7 @@ function App() {
         throw new Error(datos.error || "Error creando trabajador");
       }
 
-      setNuevoTrabajador({
-        nombre: "",
-        codigo: "",
-      });
+      setNuevoTrabajador({ ...TRABAJADOR_FORM_VACIO });
 
       await cargarDatos();
 
@@ -236,10 +472,9 @@ function App() {
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({
-            nombre: trabajadorEditando.nombre.trim(),
-            codigo: trabajadorEditando.codigo.trim().toUpperCase(),
-          }),
+          body: JSON.stringify(
+            construirPayloadTrabajador(trabajadorEditando),
+          ),
         },
       );
 
@@ -290,50 +525,83 @@ function App() {
   };
 
   // =========================================
-  // CREAR CASA
+  // CREAR / EDITAR / ELIMINAR CASA
   // =========================================
 
-  const crearCasa = async (event) => {
+  const construirPayloadCasa = (formulario, minutos) => ({
+    nombre: formulario.nombre.trim(),
+    nombre_cliente: formulario.nombre_cliente.trim() || null,
+    apellidos_cliente: formulario.apellidos_cliente.trim() || null,
+    direccion: formulario.direccion.trim() || null,
+    contacto: formulario.contacto.trim() || null,
+    codigo_postal: formulario.codigo_postal.trim() || null,
+    poblacion: formulario.poblacion.trim() || null,
+    tipo: formulario.tipo || null,
+    frecuencia_texto: formulario.frecuencia_texto.trim() || null,
+    visitas_por_periodo:
+      formulario.visitas_por_periodo === ""
+        ? null
+        : Number(formulario.visitas_por_periodo),
+    periodo_dias:
+      formulario.periodo_dias === "" ? null : Number(formulario.periodo_dias),
+    precio_hora:
+      formulario.precio_hora === "" ? null : formulario.precio_hora,
+    duracion_minutos: minutos,
+    emite_factura: formulario.emite_factura ? 1 : 0,
+    observaciones: formulario.observaciones.trim() || null,
+  });
+
+  const guardarCasa = async (event) => {
     event.preventDefault();
 
-    if (!nuevaCasa.nombre.trim()) {
+    const formulario = casaEditando ?? nuevaCasa;
+
+    if (!formulario.nombre.trim()) {
       setError("Escribe el nombre de la casa.");
+      return;
+    }
+
+    const duracion = parsearHorasAMinutos(formulario.duracion_minutos);
+
+    if (duracion.error) {
+      setError("");
+      setErrorDuracionCasa(duracion.error);
       return;
     }
 
     setGuardandoCasa(true);
     setError("");
+    setErrorDuracionCasa("");
 
     try {
-      const respuesta = await fetch(`${API_BASE}/casas`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
+      const esEdicion = Boolean(casaEditando);
+
+      const respuesta = await fetch(
+        esEdicion ? `${API_BASE}/casas/${casaEditando.id}` : `${API_BASE}/casas`,
+        {
+          method: esEdicion ? "PUT" : "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(
+            construirPayloadCasa(formulario, duracion.minutos),
+          ),
         },
-        body: JSON.stringify({
-          nombre: nuevaCasa.nombre.trim(),
-          direccion: nuevaCasa.direccion.trim() || null,
-          duracion_minutos: nuevaCasa.duracion_minutos
-            ? Number(nuevaCasa.duracion_minutos)
-            : null,
-        }),
-      });
+      );
 
       const datos = await respuesta.json();
 
       if (!respuesta.ok || !datos.ok) {
-        throw new Error(datos.error || "Error creando casa");
+        throw new Error(datos.error || "Error guardando la casa");
       }
 
-      setNuevaCasa({
-        nombre: "",
-        direccion: "",
-        duracion_minutos: "",
-      });
+      if (esEdicion) {
+        setCasaEditando(null);
+      } else {
+        setNuevaCasa({ ...CASA_FORM_VACIA });
+      }
 
       await cargarDatos();
-
-      alert("Casa creada correctamente.");
     } catch (error) {
       console.error(error);
       setError(error.message);
@@ -342,45 +610,59 @@ function App() {
     }
   };
 
-  const guardarCasaEditada = async (event) => {
-    event.preventDefault();
+  const eliminarCasa = async (casa) => {
+    const confirmado = window.confirm(
+      `¿Eliminar la casa "${casa.nombre}"? Esta acción no se puede deshacer.`,
+    );
 
-    if (!casaEditando?.nombre.trim()) {
-      setError("Escribe el nombre de la casa.");
+    if (!confirmado) {
       return;
     }
 
-    setGuardandoCasa(true);
-    setError("");
-
     try {
-      const respuesta = await fetch(`${API_BASE}/casas/${casaEditando.id}`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          nombre: casaEditando.nombre.trim(),
-          direccion: casaEditando.direccion?.trim() || null,
-          duracion_minutos: casaEditando.duracion_minutos
-            ? Number(casaEditando.duracion_minutos)
-            : null,
-        }),
+      setError("");
+
+      const respuesta = await fetch(`${API_BASE}/casas/${casa.id}`, {
+        method: "DELETE",
       });
 
       const datos = await respuesta.json();
 
-      if (!respuesta.ok || !datos.ok) {
-        throw new Error(datos.error || "Error actualizando casa");
+      if (respuesta.status === 409) {
+        const detalle = datos.detalle
+          ? ` (${datos.detalle.horarios} horarios, ${datos.detalle.facturas} facturas)`
+          : "";
+
+        setError(
+          `${datos.error}${detalle}. ${
+            datos.sugerencia || "Desactívala en su lugar."
+          }`,
+        );
+        return;
       }
 
-      setCasaEditando(null);
+      if (!respuesta.ok || !datos.ok) {
+        throw new Error(datos.error || "Error eliminando la casa");
+      }
+
+      if (casaEditando?.id === casa.id) {
+        setCasaEditando(null);
+      }
+
       await cargarDatos();
     } catch (error) {
       console.error(error);
       setError(error.message);
-    } finally {
-      setGuardandoCasa(false);
+    }
+  };
+
+  const formularioCasa = casaEditando ?? nuevaCasa;
+
+  const cambiarCampoCasa = (campo, valor) => {
+    if (casaEditando) {
+      setCasaEditando({ ...casaEditando, [campo]: valor });
+    } else {
+      setNuevaCasa({ ...nuevaCasa, [campo]: valor });
     }
   };
 
@@ -426,6 +708,7 @@ function App() {
     setResultado(null);
     setError("");
     setEditandoIndex(null);
+    setPestanaHorario("analizar");
   };
 
   // =========================================
@@ -459,6 +742,9 @@ function App() {
       }
 
       setResultado(datos);
+      setEditandoIndex(null);
+      // El análisis ha terminado: pasamos a la pestaña de revisión.
+      setPestanaHorario("revisar");
     } catch (error) {
       console.error(error);
       setError(error.message);
@@ -704,25 +990,12 @@ function App() {
   // =========================================
 
   return (
-    <div className="app">
+    <>
       {/* ================================= */}
-      {/* HEADER */}
+      {/* DATOS */}
       {/* ================================= */}
 
-      <header className="header">
-        <div className="header-content">
-          <h1>Gestor de Horarios</h1>
-
-          <p>Analiza y revisa los horarios mediante IA</p>
-        </div>
-      </header>
-
-      <main className="container">
-        {/* ================================= */}
-        {/* DATOS */}
-        {/* ================================= */}
-
-        {!cargandoDatos && (
+        {seccion === "horarios" && !cargandoDatos && (
           <div className="datos-referencia">
             <div className="dato-box">
               <span>Casas activas</span>
@@ -745,346 +1018,826 @@ function App() {
         {/* GESTIÓN */}
         {/* ================================= */}
 
-        <section className="card">
-          <div className="gestion-header">
-            <div>
-              <h2>⚙️ Gestión</h2>
+        {seccion === "gestion" && (
+          <section className="card">
+            <div className="gestion-header">
+              <div>
+                <h2>Gestión</h2>
 
-              <p>Administra las casas y trabajadores registrados.</p>
+                <p>Administra las casas y trabajadores registrados.</p>
+              </div>
             </div>
 
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={() => setMostrarGestion(!mostrarGestion)}
+            <div
+              className="pestanas pestanas-gestion"
+              role="tablist"
+              aria-label="Gestión"
             >
-              {mostrarGestion ? "Ocultar gestión" : "Abrir gestión"}
-            </button>
-          </div>
+              <button
+                type="button"
+                role="tab"
+                id="tab-casas"
+                aria-selected={pestanaGestion === "casas"}
+                aria-controls="panel-casas"
+                className={`pestana ${
+                  pestanaGestion === "casas" ? "pestana-activa" : ""
+                }`}
+                onClick={() => setPestanaGestion("casas")}
+              >
+                Casas
+                <span className="pestana-badge">{casas.length}</span>
+              </button>
 
-          {mostrarGestion && (
-            <div className="gestion-grid">
-              {/* ============================== */}
-              {/* TRABAJADORES */}
-              {/* ============================== */}
+              <button
+                type="button"
+                role="tab"
+                id="tab-trabajadores"
+                aria-selected={pestanaGestion === "trabajadores"}
+                aria-controls="panel-trabajadores"
+                className={`pestana ${
+                  pestanaGestion === "trabajadores" ? "pestana-activa" : ""
+                }`}
+                onClick={() => setPestanaGestion("trabajadores")}
+              >
+                Trabajadores
+                <span className="pestana-badge">{trabajadores.length}</span>
+              </button>
+            </div>
 
-              <div className="gestion-box">
-                <h3>👥 Trabajadores</h3>
+            {pestanaGestion === "casas" && (
+              <div
+                className="gestion-panel"
+                id="panel-casas"
+                role="tabpanel"
+                aria-labelledby="tab-casas"
+              >
+                {/* FORMULARIO DE CASA */}
 
-                <div className="lista-gestion">
-                  {trabajadores.length === 0 ? (
-                    <p className="gestion-vacio">
-                      No hay trabajadores registrados.
-                    </p>
-                  ) : (
-                    trabajadores.map((trabajador) => (
-                      <div
-                        className={`item-gestion ${
-                          normalizarActivo(trabajador.activo)
-                            ? ""
-                            : "item-inactivo"
-                        }`}
-                        key={trabajador.id}
-                      >
-                        <div>
-                          <strong>{trabajador.nombre}</strong>
-                          <span>{trabajador.codigo}</span>
-                          <span>
-                            {normalizarActivo(trabajador.activo)
-                              ? "Activo"
-                              : "Inactivo"}
-                          </span>
-                        </div>
-
-                        <div className="item-acciones">
-                          <button
-                            type="button"
-                            className="btn-mini"
-                            onClick={() => setTrabajadorEditando(trabajador)}
-                          >
-                            Editar
-                          </button>
-
-                          <button
-                            type="button"
-                            className="btn-mini"
-                            onClick={() => cambiarActivoTrabajador(trabajador)}
-                          >
-                            {normalizarActivo(trabajador.activo)
-                              ? "Desactivar"
-                              : "Activar"}
-                          </button>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-
-                <form
-                  onSubmit={
-                    trabajadorEditando
-                      ? guardarTrabajadorEditado
-                      : crearTrabajador
-                  }
-                >
-                  <h4>
-                    {trabajadorEditando
-                      ? "Editar trabajador"
-                      : "Añadir trabajador"}
-                  </h4>
-
-                  <input
-                    type="text"
-                    placeholder="Nombre"
-                    value={
-                      trabajadorEditando
-                        ? trabajadorEditando.nombre
-                        : nuevoTrabajador.nombre
-                    }
-                    onChange={(event) =>
-                      trabajadorEditando
-                        ? setTrabajadorEditando({
-                            ...trabajadorEditando,
-                            nombre: event.target.value,
-                          })
-                        : setNuevoTrabajador({
-                            ...nuevoTrabajador,
-                            nombre: event.target.value,
-                          })
-                    }
-                  />
-
-                  <input
-                    type="text"
-                    placeholder="Código"
-                    maxLength="10"
-                    value={
-                      trabajadorEditando
-                        ? trabajadorEditando.codigo
-                        : nuevoTrabajador.codigo
-                    }
-                    onChange={(event) =>
-                      trabajadorEditando
-                        ? setTrabajadorEditando({
-                            ...trabajadorEditando,
-                            codigo: event.target.value.toUpperCase(),
-                          })
-                        : setNuevoTrabajador({
-                            ...nuevoTrabajador,
-                            codigo: event.target.value.toUpperCase(),
-                          })
-                    }
-                  />
-
-                  <div className="form-actions">
-                    <button
-                      type="submit"
-                      className="btn-primary"
-                      disabled={guardandoTrabajador}
-                    >
-                      {guardandoTrabajador
-                        ? "Guardando..."
-                        : trabajadorEditando
-                          ? "Guardar cambios"
-                          : "+ Añadir trabajador"}
-                    </button>
-
-                    {trabajadorEditando && (
-                      <button
-                        type="button"
-                        className="btn-secondary"
-                        onClick={() => setTrabajadorEditando(null)}
-                      >
-                        Cancelar
-                      </button>
-                    )}
-                  </div>
-                </form>
-              </div>
-
-              {/* ============================== */}
-              {/* CASAS */}
-              {/* ============================== */}
-
-              <div className="gestion-box">
-                <h3>🏠 Casas</h3>
-
-                <div className="lista-gestion">
-                  {casas.length === 0 ? (
-                    <p className="gestion-vacio">No hay casas registradas.</p>
-                  ) : (
-                    casas.map((casa) => (
-                      <div
-                        className={`item-gestion ${
-                          normalizarActivo(casa.activo) ? "" : "item-inactivo"
-                        }`}
-                        key={casa.id}
-                      >
-                        <div>
-                          <strong>{casa.nombre}</strong>
-                          <span>{casa.duracion_minutos || "-"} min</span>
-                          <span>{casa.direccion || "Sin dirección"}</span>
-                          <span>
-                            {normalizarActivo(casa.activo)
-                              ? "Activa"
-                              : "Inactiva"}
-                          </span>
-                        </div>
-
-                        <div className="item-acciones">
-                          <button
-                            type="button"
-                            className="btn-mini"
-                            onClick={() =>
-                              setCasaEditando({
-                                ...casa,
-                                duracion_minutos:
-                                  casa.duracion_minutos?.toString() || "",
-                              })
-                            }
-                          >
-                            Editar
-                          </button>
-
-                          <button
-                            type="button"
-                            className="btn-mini"
-                            onClick={() => cambiarActivoCasa(casa)}
-                          >
-                            {normalizarActivo(casa.activo)
-                              ? "Desactivar"
-                              : "Activar"}
-                          </button>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-
-                <form onSubmit={casaEditando ? guardarCasaEditada : crearCasa}>
-                  <h4>{casaEditando ? "Editar casa" : "Añadir casa"}</h4>
-
-                  <input
-                    type="text"
-                    placeholder="Nombre de la casa"
-                    value={
-                      casaEditando ? casaEditando.nombre : nuevaCasa.nombre
-                    }
-                    onChange={(event) =>
-                      casaEditando
-                        ? setCasaEditando({
-                            ...casaEditando,
-                            nombre: event.target.value,
-                          })
-                        : setNuevaCasa({
-                            ...nuevaCasa,
-                            nombre: event.target.value,
-                          })
-                    }
-                  />
-
-                  <input
-                    type="text"
-                    placeholder="Dirección (opcional)"
-                    value={
-                      casaEditando
-                        ? casaEditando.direccion || ""
-                        : nuevaCasa.direccion
-                    }
-                    onChange={(event) =>
-                      casaEditando
-                        ? setCasaEditando({
-                            ...casaEditando,
-                            direccion: event.target.value,
-                          })
-                        : setNuevaCasa({
-                            ...nuevaCasa,
-                            direccion: event.target.value,
-                          })
-                    }
-                  />
-
-                  <input
-                    type="number"
-                    min="1"
-                    placeholder="Duración base en minutos"
-                    value={
-                      casaEditando
-                        ? casaEditando.duracion_minutos || ""
-                        : nuevaCasa.duracion_minutos
-                    }
-                    onChange={(event) =>
-                      casaEditando
-                        ? setCasaEditando({
-                            ...casaEditando,
-                            duracion_minutos: event.target.value,
-                          })
-                        : setNuevaCasa({
-                            ...nuevaCasa,
-                            duracion_minutos: event.target.value,
-                          })
-                    }
-                  />
-
-                  <div className="form-actions">
-                    <button
-                      type="submit"
-                      className="btn-primary"
-                      disabled={guardandoCasa}
-                    >
-                      {guardandoCasa
-                        ? "Guardando..."
-                        : casaEditando
-                          ? "Guardar cambios"
-                          : "+ Añadir casa"}
-                    </button>
+                <div className="gestion-seccion">
+                  <div className="gestion-seccion-cabecera">
+                    <h3>{casaEditando ? "Editar casa" : "Añadir casa"}</h3>
 
                     {casaEditando && (
-                      <button
-                        type="button"
-                        className="btn-secondary"
-                        onClick={() => setCasaEditando(null)}
-                      >
-                        Cancelar
-                      </button>
+                      <span className="gestion-contador">
+                        Editando: {casaEditando.nombre || "casa"}
+                      </span>
                     )}
                   </div>
-                </form>
+
+                  <form onSubmit={guardarCasa} className="form-casa">
+                    <div className="form-grid">
+                      <label className="campo-form">
+                        <span>Nombre de la casa *</span>
+                        <input
+                          type="text"
+                          value={formularioCasa.nombre}
+                          onChange={(event) =>
+                            cambiarCampoCasa("nombre", event.target.value)
+                          }
+                          required
+                        />
+                      </label>
+
+                      <label className="campo-form">
+                        <span>Nombre del cliente</span>
+                        <input
+                          type="text"
+                          value={formularioCasa.nombre_cliente}
+                          onChange={(event) =>
+                            cambiarCampoCasa(
+                              "nombre_cliente",
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </label>
+
+                      <label className="campo-form">
+                        <span>Apellidos del cliente</span>
+                        <input
+                          type="text"
+                          value={formularioCasa.apellidos_cliente}
+                          onChange={(event) =>
+                            cambiarCampoCasa(
+                              "apellidos_cliente",
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </label>
+
+                      <label className="campo-form">
+                        <span>Contacto</span>
+                        <input
+                          type="text"
+                          value={formularioCasa.contacto}
+                          onChange={(event) =>
+                            cambiarCampoCasa("contacto", event.target.value)
+                          }
+                        />
+                      </label>
+
+                      <label className="campo-form campo-ancho">
+                        <span>Dirección</span>
+                        <input
+                          type="text"
+                          value={formularioCasa.direccion}
+                          onChange={(event) =>
+                            cambiarCampoCasa("direccion", event.target.value)
+                          }
+                        />
+                      </label>
+
+                      <label className="campo-form">
+                        <span>Código postal</span>
+                        <input
+                          type="text"
+                          value={formularioCasa.codigo_postal}
+                          onChange={(event) =>
+                            cambiarCampoCasa(
+                              "codigo_postal",
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </label>
+
+                      <label className="campo-form">
+                        <span>Población</span>
+                        <input
+                          type="text"
+                          value={formularioCasa.poblacion}
+                          onChange={(event) =>
+                            cambiarCampoCasa("poblacion", event.target.value)
+                          }
+                        />
+                      </label>
+
+                      <label className="campo-form">
+                        <span>Tipo de servicio</span>
+                        <select
+                          value={formularioCasa.tipo}
+                          onChange={(event) =>
+                            cambiarCampoCasa("tipo", event.target.value)
+                          }
+                        >
+                          <option value="">Sin clasificar</option>
+                          {TIPOS_SERVICIO.map((tipo) => (
+                            <option key={tipo.valor} value={tipo.valor}>
+                              {tipo.etiqueta}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <label className="campo-form">
+                        <span>Frecuencia</span>
+                        <input
+                          type="text"
+                          placeholder="Ej.: SEMANAL, C/15 DÍAS"
+                          value={formularioCasa.frecuencia_texto}
+                          onChange={(event) =>
+                            cambiarCampoCasa(
+                              "frecuencia_texto",
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </label>
+
+                      <label className="campo-form">
+                        <span>Visitas por periodo</span>
+                        <input
+                          type="number"
+                          min="0"
+                          max="255"
+                          value={formularioCasa.visitas_por_periodo}
+                          onChange={(event) =>
+                            cambiarCampoCasa(
+                              "visitas_por_periodo",
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </label>
+
+                      <label className="campo-form">
+                        <span>Días del periodo</span>
+                        <input
+                          type="number"
+                          min="1"
+                          max="3650"
+                          value={formularioCasa.periodo_dias}
+                          onChange={(event) =>
+                            cambiarCampoCasa(
+                              "periodo_dias",
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </label>
+
+                      <label className="campo-form">
+                        <span>Precio por hora (€)</span>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          value={formularioCasa.precio_hora}
+                          onChange={(event) =>
+                            cambiarCampoCasa(
+                              "precio_hora",
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </label>
+
+                      <label className="campo-duracion">
+                        <span>Duración de referencia (horas)</span>
+
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          placeholder="Ej.: 4 o 1,5"
+                          aria-label="Duración de referencia (horas)"
+                          aria-invalid={
+                            errorDuracionCasa ? "true" : undefined
+                          }
+                          aria-describedby={
+                            errorDuracionCasa
+                              ? "error-duracion-casa"
+                              : undefined
+                          }
+                          value={formularioCasa.duracion_minutos}
+                          onChange={(event) => {
+                            setErrorDuracionCasa("");
+                            cambiarCampoCasa(
+                              "duracion_minutos",
+                              event.target.value,
+                            );
+                          }}
+                        />
+
+                        {errorDuracionCasa ? (
+                          <small
+                            className="campo-error"
+                            id="error-duracion-casa"
+                            role="alert"
+                          >
+                            {errorDuracionCasa}
+                          </small>
+                        ) : (
+                          <small className="campo-ayuda">
+                            Referencia del Excel. No se usa para calcular horas
+                            trabajadas.
+                          </small>
+                        )}
+                      </label>
+
+                      <label className="campo-form campo-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={formularioCasa.emite_factura}
+                          onChange={(event) =>
+                            cambiarCampoCasa(
+                              "emite_factura",
+                              event.target.checked,
+                            )
+                          }
+                        />
+                        <span>Emite factura</span>
+                      </label>
+
+                      <label className="campo-form campo-ancho">
+                        <span>Observaciones</span>
+                        <textarea
+                          rows="3"
+                          value={formularioCasa.observaciones}
+                          onChange={(event) =>
+                            cambiarCampoCasa(
+                              "observaciones",
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </label>
+                    </div>
+
+                    <div className="form-actions">
+                      <button
+                        type="submit"
+                        className="btn-primary"
+                        disabled={guardandoCasa}
+                      >
+                        {guardandoCasa
+                          ? "Guardando..."
+                          : casaEditando
+                            ? "Guardar cambios"
+                            : "+ Añadir casa"}
+                      </button>
+
+                      {casaEditando && (
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          onClick={() => {
+                            setErrorDuracionCasa("");
+                            setCasaEditando(null);
+                          }}
+                        >
+                          Cancelar
+                        </button>
+                      )}
+                    </div>
+                  </form>
+                </div>
+
+                {/* LISTADO DE CASAS */}
+
+                <div className="gestion-seccion">
+                  <div className="gestion-seccion-cabecera">
+                    <h3>Casas registradas</h3>
+
+                    <span className="gestion-contador">
+                      {casas.length} registradas · {casasPendientes} con datos
+                      pendientes
+                    </span>
+                  </div>
+
+                  <div className="barra-busqueda">
+                    <input
+                      type="search"
+                      placeholder="Buscar por nombre, cliente, dirección o población"
+                      aria-label="Buscar casa"
+                      value={busquedaCasa}
+                      onChange={(event) => setBusquedaCasa(event.target.value)}
+                    />
+
+                    <label className="filtro-pendientes">
+                      <input
+                        type="checkbox"
+                        checked={soloPendientes}
+                        onChange={(event) =>
+                          setSoloPendientes(event.target.checked)
+                        }
+                      />
+                      Solo con datos pendientes
+                    </label>
+                  </div>
+
+                  <div className="lista-gestion lista-casas">
+                    {casas.length === 0 ? (
+                      <p className="gestion-vacio">
+                        No hay casas registradas.
+                      </p>
+                    ) : casasFiltradas.length === 0 ? (
+                      <p className="gestion-vacio">
+                        Ninguna casa coincide con la búsqueda.
+                      </p>
+                    ) : (
+                      casasFiltradas.map((casa) => {
+                        const activa = normalizarActivo(casa.activo);
+                        const pendiente = normalizarActivo(
+                          casa.datos_pendientes,
+                        );
+                        const faltantes = casa.campos_faltantes || [];
+
+                        return (
+                          <div
+                            className={`item-gestion item-casa ${
+                              activa ? "" : "item-inactivo"
+                            }`}
+                            key={casa.id}
+                          >
+                            <div className="item-casa-datos">
+                              <div className="item-casa-titulo">
+                                <strong>{casa.nombre}</strong>
+
+                                {!activa && (
+                                  <span className="badge badge-inactiva">
+                                    Inactiva
+                                  </span>
+                                )}
+
+                                {pendiente && (
+                                  <span
+                                    className="badge badge-pendiente"
+                                    title={
+                                      faltantes.length > 0
+                                        ? `Falta: ${faltantes.join(", ")}`
+                                        : "Faltan datos"
+                                    }
+                                  >
+                                    Datos pendientes
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="item-casa-detalle">
+                                <span>
+                                  {[casa.nombre_cliente, casa.apellidos_cliente]
+                                    .filter(Boolean)
+                                    .join(" ") || "Sin cliente"}
+                                </span>
+                                <span>
+                                  {casa.direccion || "Sin dirección"}
+                                </span>
+                                <span>
+                                  {[casa.codigo_postal, casa.poblacion]
+                                    .filter(Boolean)
+                                    .join(" ") || "Sin población"}
+                                </span>
+                                <span>{casa.contacto || "Sin contacto"}</span>
+                                <span>
+                                  {formatearDuracionHoras(
+                                    casa.duracion_minutos,
+                                  )}
+                                </span>
+                                <span>
+                                  {casa.frecuencia_texto || "Sin frecuencia"}
+                                </span>
+                                <span>
+                                  {casa.precio_hora === null ||
+                                  casa.precio_hora === undefined
+                                    ? "Sin precio"
+                                    : `${Number(casa.precio_hora).toFixed(2)} €/h`}
+                                </span>
+                              </div>
+
+                              {pendiente && faltantes.length > 0 && (
+                                <p className="item-casa-faltantes">
+                                  Falta: {faltantes.join(", ")}
+                                </p>
+                              )}
+                            </div>
+
+                            <div className="item-acciones">
+                              <button
+                                type="button"
+                                className="btn-mini"
+                                onClick={() => {
+                                  setErrorDuracionCasa("");
+                                  setCasaEditando({
+                                    ...casaAFormulario(casa),
+                                    id: casa.id,
+                                  });
+                                }}
+                              >
+                                Editar
+                              </button>
+
+                              <button
+                                type="button"
+                                className="btn-mini"
+                                onClick={() => cambiarActivoCasa(casa)}
+                              >
+                                {activa ? "Desactivar" : "Activar"}
+                              </button>
+
+                              <button
+                                type="button"
+                                className="btn-mini btn-peligro"
+                                onClick={() => eliminarCasa(casa)}
+                              >
+                                Eliminar
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
               </div>
-            </div>
-          )}
-        </section>
+            )}
+
+            {pestanaGestion === "trabajadores" && (
+              <div
+                className="gestion-panel"
+                id="panel-trabajadores"
+                role="tabpanel"
+                aria-labelledby="tab-trabajadores"
+              >
+                {/* FORMULARIO DE TRABAJADOR */}
+
+                <div className="gestion-seccion">
+                  <div className="gestion-seccion-cabecera">
+                    <h3>
+                      {trabajadorEditando
+                        ? "Editar trabajador"
+                        : "Añadir trabajador"}
+                    </h3>
+
+                    {trabajadorEditando && (
+                      <span className="gestion-contador">
+                        Editando:{" "}
+                        {nombreCompletoTrabajador(trabajadorEditando)}
+                      </span>
+                    )}
+                  </div>
+
+                  <form
+                    onSubmit={
+                      trabajadorEditando
+                        ? guardarTrabajadorEditado
+                        : crearTrabajador
+                    }
+                    className="form-trabajador"
+                  >
+                    <div className="form-grid">
+                      <label className="campo-form">
+                        <span>Nombre *</span>
+                        <input
+                          type="text"
+                          value={
+                            trabajadorEditando
+                              ? trabajadorEditando.nombre
+                              : nuevoTrabajador.nombre
+                          }
+                          onChange={(event) =>
+                            cambiarCampoTrabajador(
+                              "nombre",
+                              event.target.value,
+                            )
+                          }
+                          required
+                        />
+                      </label>
+
+                      <label className="campo-form">
+                        <span>Apellidos</span>
+                        <input
+                          type="text"
+                          value={
+                            trabajadorEditando
+                              ? trabajadorEditando.apellidos || ""
+                              : nuevoTrabajador.apellidos
+                          }
+                          onChange={(event) =>
+                            cambiarCampoTrabajador(
+                              "apellidos",
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </label>
+
+                      <label className="campo-form">
+                        <span>Código o clave *</span>
+                        <input
+                          type="text"
+                          maxLength="10"
+                          value={
+                            trabajadorEditando
+                              ? trabajadorEditando.codigo
+                              : nuevoTrabajador.codigo
+                          }
+                          onChange={(event) =>
+                            cambiarCampoTrabajador(
+                              "codigo",
+                              event.target.value.toUpperCase(),
+                            )
+                          }
+                          required
+                        />
+                      </label>
+
+                      <label className="campo-form">
+                        <span>Contacto</span>
+                        <input
+                          type="text"
+                          value={
+                            trabajadorEditando
+                              ? trabajadorEditando.contacto || ""
+                              : nuevoTrabajador.contacto
+                          }
+                          onChange={(event) =>
+                            cambiarCampoTrabajador(
+                              "contacto",
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </label>
+
+                      <label className="campo-form">
+                        <span>Población</span>
+                        <input
+                          type="text"
+                          value={
+                            trabajadorEditando
+                              ? trabajadorEditando.poblacion || ""
+                              : nuevoTrabajador.poblacion
+                          }
+                          onChange={(event) =>
+                            cambiarCampoTrabajador(
+                              "poblacion",
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </label>
+
+                      <label className="campo-form campo-ancho">
+                        <span>Dirección</span>
+                        <input
+                          type="text"
+                          value={
+                            trabajadorEditando
+                              ? trabajadorEditando.direccion || ""
+                              : nuevoTrabajador.direccion
+                          }
+                          onChange={(event) =>
+                            cambiarCampoTrabajador(
+                              "direccion",
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </label>
+                    </div>
+
+                    <div className="form-actions">
+                      <button
+                        type="submit"
+                        className="btn-primary"
+                        disabled={guardandoTrabajador}
+                      >
+                        {guardandoTrabajador
+                          ? "Guardando..."
+                          : trabajadorEditando
+                            ? "Guardar cambios"
+                            : "+ Añadir trabajador"}
+                      </button>
+
+                      {trabajadorEditando && (
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          onClick={() => setTrabajadorEditando(null)}
+                        >
+                          Cancelar
+                        </button>
+                      )}
+                    </div>
+                  </form>
+                </div>
+
+                {/* LISTADO DE TRABAJADORES */}
+
+                <div className="gestion-seccion">
+                  <div className="gestion-seccion-cabecera">
+                    <h3>Trabajadores registrados</h3>
+
+                    <span className="gestion-contador">
+                      {trabajadores.length} registrados ·{" "}
+                      {trabajadoresPendientes} con datos pendientes
+                    </span>
+                  </div>
+
+                  <div className="barra-busqueda">
+                    <input
+                      type="search"
+                      placeholder="Buscar por nombre, apellidos o código"
+                      aria-label="Buscar trabajador"
+                      value={busquedaTrabajador}
+                      onChange={(event) =>
+                        setBusquedaTrabajador(event.target.value)
+                      }
+                    />
+                  </div>
+
+                  <div className="lista-gestion lista-trabajadores">
+                    {trabajadores.length === 0 ? (
+                      <p className="gestion-vacio">
+                        No hay trabajadores registrados.
+                      </p>
+                    ) : trabajadoresFiltrados.length === 0 ? (
+                      <p className="gestion-vacio">
+                        Ningún trabajador coincide con la búsqueda.
+                      </p>
+                    ) : (
+                      trabajadoresFiltrados.map((trabajador) => {
+                        const activo = normalizarActivo(trabajador.activo);
+                        const pendiente = normalizarActivo(
+                          trabajador.datos_pendientes,
+                        );
+
+                        return (
+                          <div
+                            className={`item-gestion item-trabajador ${
+                              activo ? "" : "item-inactivo"
+                            }`}
+                            key={trabajador.id}
+                          >
+                            <div className="item-trabajador-datos">
+                              <div className="item-casa-titulo">
+                                <strong>
+                                  {nombreCompletoTrabajador(trabajador)}
+                                </strong>
+
+                                <span className="codigo-trabajador">
+                                  {trabajador.codigo}
+                                </span>
+
+                                {!activo && (
+                                  <span className="badge badge-inactiva">
+                                    Inactivo
+                                  </span>
+                                )}
+
+                                {pendiente && (
+                                  <span
+                                    className="badge badge-pendiente"
+                                    title="Faltan datos de contacto, dirección o población"
+                                  >
+                                    Datos pendientes
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="item-casa-detalle">
+                                <span>
+                                  {trabajador.contacto || "Sin contacto"}
+                                </span>
+                                <span>
+                                  {trabajador.poblacion || "Sin población"}
+                                </span>
+                                {trabajador.direccion && (
+                                  <span>{trabajador.direccion}</span>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="item-acciones">
+                              <button
+                                type="button"
+                                className="btn-mini"
+                                onClick={() =>
+                                  setTrabajadorEditando({ ...trabajador })
+                                }
+                              >
+                                Editar
+                              </button>
+
+                              <button
+                                type="button"
+                                className="btn-mini"
+                                onClick={() =>
+                                  cambiarActivoTrabajador(trabajador)
+                                }
+                              >
+                                {activo ? "Desactivar" : "Activar"}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </section>
+        )}
 
         {/* ================================= */}
         {/* HISTORIAL */}
         {/* ================================= */}
 
-        <section className="card">
-          <div className="gestion-header">
-            <div>
-              <h2>Historial</h2>
+        {seccion === "historial" && (
+          <section className="card">
+            <div className="gestion-header">
+              <div>
+                <h2>Historial</h2>
 
-              <p>Consulta los horarios guardados sin modificarlos.</p>
+                <p>Consulta los horarios guardados sin modificarlos.</p>
+              </div>
             </div>
 
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={() => setMostrarHistorial(!mostrarHistorial)}
-            >
-              {mostrarHistorial ? "Ocultar historial" : "Abrir historial"}
-            </button>
-          </div>
+            {cargandoHistorial && historial.length === 0 ? (
+              <p className="gestion-vacio">Cargando historial...</p>
+            ) : historial.length === 0 ? (
+              <div className="estado-vacio">
+                <span className="estado-vacio-icono" aria-hidden="true">
+                  🗓️
+                </span>
 
-          {mostrarHistorial && (
-            <div className="historial-layout">
-              <div className="historial-lista">
-                {cargandoHistorial && historial.length === 0 ? (
-                  <p className="gestion-vacio">Cargando historial...</p>
-                ) : historial.length === 0 ? (
-                  <p className="gestion-vacio">No hay horarios guardados.</p>
-                ) : (
-                  historial.map((dia) => (
+                <h3>Todavía no hay horarios guardados</h3>
+
+                <p>
+                  Cuando analices y guardes un horario desde la pestaña
+                  Horarios, aparecerá aquí para consultarlo cuando quieras.
+                </p>
+
+                <Link className="btn-primary estado-vacio-accion" to="/horarios">
+                  Ir a Horarios
+                </Link>
+              </div>
+            ) : (
+              <div className="historial-layout">
+                <div className="historial-lista">
+                  {historial.map((dia) => (
                     <button
                       type="button"
                       className={`historial-dia ${
@@ -1097,9 +1850,8 @@ function App() {
                       <span>{dia.total_servicios} servicios</span>
                       <span>{dia.estado}</span>
                     </button>
-                  ))
-                )}
-              </div>
+                  ))}
+                </div>
 
               <div className="historial-detalle">
                 {!diaHistorial ? (
@@ -1141,70 +1893,187 @@ function App() {
                 )}
               </div>
             </div>
-          )}
-        </section>
+            )}
+          </section>
+        )}
 
         {/* ================================= */}
-        {/* ANALIZAR */}
+        {/* ANALIZAR / REVISAR (PESTAÑAS) */}
         {/* ================================= */}
 
-        <section className="card">
-          <div className="card-title">
-            <h2>Analizar horario</h2>
+        {seccion === "horarios" && (
+        <div className="seccion-horarios">
+          <div className="pestanas" role="tablist" aria-label="Horarios">
+            <button
+              type="button"
+              role="tab"
+              id="tab-analizar"
+              aria-selected={pestanaHorario === "analizar"}
+              aria-controls="panel-analizar"
+              className={`pestana ${
+                pestanaHorario === "analizar" ? "pestana-activa" : ""
+              }`}
+              onClick={() => setPestanaHorario("analizar")}
+            >
+              1. Analizar horario
+            </button>
 
-            <p>Selecciona una imagen del horario para analizarla.</p>
+            <button
+              type="button"
+              role="tab"
+              id="tab-revisar"
+              aria-selected={pestanaHorario === "revisar"}
+              aria-controls="panel-revisar"
+              className={`pestana ${
+                pestanaHorario === "revisar" ? "pestana-activa" : ""
+              }`}
+              onClick={() => setPestanaHorario("revisar")}
+              disabled={!resultado}
+              title={
+                resultado
+                  ? "Revisar los servicios detectados"
+                  : "Analiza una imagen para revisar los servicios"
+              }
+            >
+              2. Revisar horario
+
+              {resultado && (
+                <span className="pestana-badge">
+                  {resultado.servicios.length}
+                </span>
+              )}
+
+              {resultado && contarErrores() > 0 && (
+                <span className="pestana-badge pestana-badge-aviso">
+                  {contarErrores()}
+                </span>
+              )}
+            </button>
           </div>
 
-          <div className="upload-area">
-            <input
-              id="imagen"
-              type="file"
-              accept="image/*"
-              onChange={seleccionarImagen}
-            />
-
-            <label htmlFor="imagen" className="file-button">
-              Seleccionar archivo
-            </label>
-
-            {imagen && <span className="file-name">{imagen.name}</span>}
-          </div>
-
-          {imagen && (
-            <div className="archivo">
-              <strong>Imagen:</strong>
-              <span>{imagen.name}</span>
+          {error && (
+            <div className="error" role="alert">
+              {error}
             </div>
           )}
 
-          <button
-            className="btn-primary"
-            onClick={analizarImagen}
-            disabled={!imagen || cargando}
-          >
-            {cargando ? "Analizando..." : "Analizar horario"}
-          </button>
+          {pestanaHorario === "analizar" && (
+            <section
+              className="card"
+              id="panel-analizar"
+              role="tabpanel"
+              aria-labelledby="tab-analizar"
+            >
+              <div className="panel-analizar">
+                <div className="panel-upload">
+                  <h2>Analizar horario</h2>
 
-          {error && <div className="error">{error}</div>}
-        </section>
+                  <p className="panel-upload-ayuda">
+                    Selecciona una fotografía del horario y revísala antes de
+                    analizarla.
+                  </p>
+
+                  <div className="upload-area">
+                    <input
+                      id="imagen"
+                      type="file"
+                      accept="image/*"
+                      onChange={seleccionarImagen}
+                    />
+
+                    <label htmlFor="imagen" className="file-button">
+                      Seleccionar archivo
+                    </label>
+
+                    {imagen && (
+                      <span className="file-name">{imagen.name}</span>
+                    )}
+                  </div>
+
+                  {imagen ? (
+                    <figure className="vista-previa">
+                      <img
+                        src={vistaPrevia}
+                        alt={`Vista previa de ${imagen.name}`}
+                      />
+                      <figcaption>{imagen.name}</figcaption>
+                    </figure>
+                  ) : (
+                    <div className="vista-previa vista-previa-vacia">
+                      <span>No hay ninguna imagen seleccionada</span>
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    className="btn-primary btn-analizar"
+                    onClick={analizarImagen}
+                    disabled={!imagen || cargando}
+                  >
+                    {cargando ? "Analizando..." : "Analizar horario"}
+                  </button>
+
+                  {cargando && (
+                    <div className="cargando-panel" role="status">
+                      <span className="spinner" aria-hidden="true" />
+                      Analizando la imagen con IA. Esto puede tardar unos
+                      segundos.
+                    </div>
+                  )}
+
+                  {resultado && !cargando && (
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => setPestanaHorario("revisar")}
+                    >
+                      Ver {resultado.servicios.length} servicios detectados →
+                    </button>
+                  )}
+                </div>
+              </div>
+            </section>
+          )}
 
         {/* ================================= */}
         {/* RESULTADO */}
         {/* ================================= */}
 
-        {resultado && (
-          <section className="card">
+        {pestanaHorario === "revisar" && resultado && (
+          <section
+            className="card"
+            id="panel-revisar"
+            role="tabpanel"
+            aria-labelledby="tab-revisar"
+          >
             <div className="resultado-header">
               <div>
                 <h2>Revisar horario</h2>
 
-                <p>{resultado.servicios.length} servicios detectados</p>
+                <div className="resumen-servicios">
+                  <span className="dato-chip">
+                    {resultado.servicios.length} servicios detectados
+                  </span>
+
+                  <span
+                    className={
+                      contarErrores() > 0
+                        ? "dato-chip dato-chip-aviso"
+                        : "dato-chip dato-chip-ok"
+                    }
+                  >
+                    {contarErrores() > 0
+                      ? `${contarErrores()} pendientes de revisión`
+                      : "Sin pendientes"}
+                  </span>
+                </div>
               </div>
 
               <div className="guardar-panel">
-                <label>Fecha</label>
+                <label htmlFor="fecha-horario">Fecha</label>
 
                 <input
+                  id="fecha-horario"
                   type="date"
                   value={fecha}
                   onChange={(event) => setFecha(event.target.value)}
@@ -1233,255 +2102,374 @@ function App() {
               </div>
             </div>
 
-            <div className="tabla-horarios">
-              {resultado.servicios.map((servicio, index) => {
-                const estaEditando = editandoIndex === index;
+            <div className="tabla-scroll">
+              <table className="tabla-servicios">
+                <thead>
+                  <tr>
+                    <th scope="col">Casa / Cliente</th>
+                    <th scope="col">Hora de inicio</th>
+                    <th scope="col">Hora de fin</th>
+                    <th scope="col">Trabajadores</th>
+                    <th scope="col" className="col-acciones">
+                      Acciones
+                    </th>
+                  </tr>
+                </thead>
 
-                const tieneErrores = servicioTieneErrores(servicio);
+                <tbody>
+                  {resultado.servicios.map((servicio, index) => {
+                    const estaEditando = editandoIndex === index;
 
-                // =================================
-                // EDICIÓN
-                // =================================
+                    const tieneErrores = servicioTieneErrores(servicio);
 
-                if (estaEditando) {
-                  return (
-                    <div className="fila-horario fila-edicion" key={index}>
-                      {/* CASA */}
+                    // =================================
+                    // EDICIÓN
+                    // =================================
 
-                      <div className="celda casa-edicion">
-                        <label>Casa</label>
+                    if (estaEditando) {
+                      return (
+                        <tr className="fila-edicion" key={index}>
+                          <td>
+                            <label htmlFor={`casa-${index}`}>Casa</label>
 
-                        <select
-                          value={
-                            servicio.casa.encontrada
-                              ? servicio.casa.datos.id
-                              : ""
-                          }
-                          className={
-                            !servicio.casa.encontrada ? "select-warning" : ""
-                          }
-                          onChange={(event) =>
-                            actualizarServicio(
-                              index,
-                              "casa",
-                              event.target.value,
-                            )
-                          }
-                        >
-                          {!servicio.casa.encontrada && (
-                            <option value="">
-                              ⚠️ {servicio.casa.nombre}
-                              {" — no registrada"}
-                            </option>
-                          )}
+                            <select
+                              id={`casa-${index}`}
+                              value={
+                                servicio.casa.encontrada &&
+                                servicio.casa.datos
+                                  ? servicio.casa.datos.id
+                                  : ""
+                              }
+                              className={
+                                !servicio.casa.encontrada
+                                  ? "select-warning"
+                                  : ""
+                              }
+                              onChange={(event) =>
+                                actualizarServicio(
+                                  index,
+                                  "casa",
+                                  event.target.value,
+                                )
+                              }
+                            >
+                              {!servicio.casa.encontrada && (
+                                <option value="">
+                                  ⚠️ {servicio.casa.nombre}
+                                  {" — no registrada"}
+                                </option>
+                              )}
 
-                          {casasActivas.map((casa) => (
-                            <option key={casa.id} value={casa.id}>
-                              {casa.nombre}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                              {casasActivas.map((casa) => (
+                                <option key={casa.id} value={casa.id}>
+                                  {casa.nombre}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
 
-                      {/* HORARIO */}
+                          <td>
+                            <label htmlFor={`inicio-${index}`}>Inicio</label>
 
-                      <div className="celda horario-edicion">
-                        <div>
-                          <label>Inicio</label>
+                            <input
+                              id={`inicio-${index}`}
+                              type="time"
+                              value={servicio.hora_inicio || ""}
+                              onChange={(event) =>
+                                actualizarServicio(
+                                  index,
+                                  "hora_inicio",
+                                  event.target.value,
+                                )
+                              }
+                            />
+                          </td>
 
-                          <input
-                            type="time"
-                            value={servicio.hora_inicio || ""}
-                            onChange={(event) =>
-                              actualizarServicio(
-                                index,
-                                "hora_inicio",
-                                event.target.value,
-                              )
-                            }
-                          />
-                        </div>
+                          <td>
+                            <label htmlFor={`fin-${index}`}>Fin</label>
 
-                        <span>→</span>
+                            <input
+                              id={`fin-${index}`}
+                              type="time"
+                              value={servicio.hora_fin || ""}
+                              onChange={(event) =>
+                                actualizarServicio(
+                                  index,
+                                  "hora_fin",
+                                  event.target.value,
+                                )
+                              }
+                            />
+                          </td>
 
-                        <div>
-                          <label>Fin</label>
+                          <td>
+                            <label>Trabajadores</label>
 
-                          <input
-                            type="time"
-                            value={servicio.hora_fin || ""}
-                            onChange={(event) =>
-                              actualizarServicio(
-                                index,
-                                "hora_fin",
-                                event.target.value,
-                              )
-                            }
-                          />
-                        </div>
-                      </div>
+                            <div className="trabajadores-edicion">
+                              {servicio.trabajadores.map(
+                                (trabajador, trabajadorIndex) => (
+                                  <div
+                                    className="trabajador-edicion"
+                                    key={trabajadorIndex}
+                                  >
+                                    <select
+                                      aria-label={`Trabajador ${
+                                        trabajadorIndex + 1
+                                      } del servicio ${index + 1}`}
+                                      value={
+                                        trabajador.encontrado &&
+                                        trabajador.trabajador
+                                          ? trabajador.trabajador.codigo
+                                          : ""
+                                      }
+                                      className={
+                                        !trabajador.encontrado
+                                          ? "select-warning"
+                                          : ""
+                                      }
+                                      onChange={(event) =>
+                                        actualizarTrabajador(
+                                          index,
+                                          trabajadorIndex,
+                                          event.target.value,
+                                        )
+                                      }
+                                    >
+                                      {!trabajador.encontrado && (
+                                        <option value="">
+                                          ⚠️{" "}
+                                          {trabajador.codigo ||
+                                            "Sin seleccionar"}
+                                          {" — no registrado"}
+                                        </option>
+                                      )}
 
-                      {/* TRABAJADORES */}
+                                      {trabajadoresActivos.map((item) => (
+                                        <option
+                                          key={item.id}
+                                          value={item.codigo}
+                                        >
+                                          {item.codigo}
+                                          {" - "}
+                                          {item.nombre}
+                                        </option>
+                                      ))}
+                                    </select>
 
-                      <div className="celda trabajadores-edicion-container">
-                        <label>Trabajadores</label>
+                                    <button
+                                      type="button"
+                                      className="btn-x"
+                                      aria-label={`Quitar trabajador ${
+                                        trabajadorIndex + 1
+                                      } del servicio ${index + 1}`}
+                                      onClick={() =>
+                                        eliminarTrabajador(
+                                          index,
+                                          trabajadorIndex,
+                                        )
+                                      }
+                                    >
+                                      ×
+                                    </button>
+                                  </div>
+                                ),
+                              )}
+                            </div>
 
-                        <div className="trabajadores-edicion">
-                          {servicio.trabajadores.map(
-                            (trabajador, trabajadorIndex) => (
-                              <div
-                                className="trabajador-edicion"
-                                key={trabajadorIndex}
-                              >
-                                <select
-                                  value={
-                                    trabajador.encontrado
-                                      ? trabajador.trabajador.codigo
-                                      : ""
-                                  }
-                                  className={
-                                    !trabajador.encontrado
-                                      ? "select-warning"
-                                      : ""
-                                  }
-                                  onChange={(event) =>
-                                    actualizarTrabajador(
-                                      index,
-                                      trabajadorIndex,
-                                      event.target.value,
-                                    )
-                                  }
-                                >
-                                  {!trabajador.encontrado && (
-                                    <option value="">
-                                      ⚠️{" "}
-                                      {trabajador.codigo || "Sin seleccionar"}
-                                      {" — no registrado"}
-                                    </option>
-                                  )}
+                            <button
+                              type="button"
+                              className="btn-anadir"
+                              onClick={() => añadirTrabajador(index)}
+                            >
+                              + Trabajador
+                            </button>
+                          </td>
 
-                                  {trabajadoresActivos.map((item) => (
-                                    <option key={item.id} value={item.codigo}>
-                                      {item.codigo}
-                                      {" - "}
-                                      {item.nombre}
-                                    </option>
-                                  ))}
-                                </select>
+                          <td className="col-acciones">
+                            <button
+                              type="button"
+                              className="btn-guardar-edicion"
+                              onClick={() => setEditandoIndex(null)}
+                            >
+                              ✓ Listo
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    }
 
-                                <button
-                                  type="button"
-                                  className="btn-x"
-                                  onClick={() =>
-                                    eliminarTrabajador(index, trabajadorIndex)
-                                  }
-                                >
-                                  ×
-                                </button>
-                              </div>
-                            ),
-                          )}
-                        </div>
+                    // =================================
+                    // VISTA NORMAL
+                    // =================================
 
-                        <button
-                          type="button"
-                          className="btn-anadir"
-                          onClick={() => añadirTrabajador(index)}
-                        >
-                          + Trabajador
-                        </button>
-                      </div>
-
-                      {/* LISTO */}
-
-                      <div className="acciones">
-                        <button
-                          type="button"
-                          className="btn-guardar-edicion"
-                          onClick={() => setEditandoIndex(null)}
-                        >
-                          ✓ Listo
-                        </button>
-                      </div>
-                    </div>
-                  );
-                }
-
-                // =================================
-                // VISTA NORMAL
-                // =================================
-
-                return (
-                  <div
-                    className={`fila-horario ${
-                      tieneErrores ? "fila-con-error" : ""
-                    }`}
-                    key={index}
-                  >
-                    {/* CASA */}
-
-                    <div className="celda casa-celda">
-                      <strong>{servicio.casa.nombre}</strong>
-
-                      {!servicio.casa.encontrada && (
-                        <span className="mini-warning">⚠️ No registrada</span>
-                      )}
-                    </div>
-
-                    {/* HORARIO */}
-
-                    <div className="celda horario-celda">
-                      <strong>{servicio.hora_inicio || "--:--"}</strong>
-
-                      <span>→</span>
-
-                      <strong>{servicio.hora_fin || "--:--"}</strong>
-
-                      {!servicio.hora_fin && (
-                        <span className="mini-warning">⚠️ Falta hora</span>
-                      )}
-                    </div>
-
-                    {/* TRABAJADORES */}
-
-                    <div className="celda trabajadores-celda">
-                      {servicio.trabajadores.map(
-                        (trabajador, trabajadorIndex) => (
-                          <span
-                            key={trabajadorIndex}
-                            className={
-                              trabajador.encontrado
-                                ? "trabajador-tag"
-                                : "trabajador-tag trabajador-desconocido"
-                            }
-                          >
-                            {trabajador.encontrado
-                              ? trabajador.trabajador.codigo
-                              : `⚠️ ${trabajador.codigo}`}
-                          </span>
-                        ),
-                      )}
-                    </div>
-
-                    {/* EDITAR */}
-
-                    <div className="acciones">
-                      <button
-                        type="button"
-                        className="btn-editar"
-                        onClick={() => setEditandoIndex(index)}
+                    return (
+                      <tr
+                        key={index}
+                        className={tieneErrores ? "fila-con-error" : ""}
                       >
-                        ✏️ Editar
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
+                        <td className="celda-casa">
+                          <strong>{servicio.casa.nombre}</strong>
+
+                          {!servicio.casa.encontrada && (
+                            <span className="mini-warning">
+                              ⚠️ No registrada
+                            </span>
+                          )}
+                        </td>
+
+                        <td className="celda-hora">
+                          <strong>
+                            {formatearHora(servicio.hora_inicio)}
+                          </strong>
+
+                          {!servicio.hora_inicio && (
+                            <span className="mini-warning">
+                              ⚠️ Falta hora
+                            </span>
+                          )}
+                        </td>
+
+                        <td className="celda-hora">
+                          <strong>{formatearHora(servicio.hora_fin)}</strong>
+
+                          {!servicio.hora_fin && (
+                            <span className="mini-warning">
+                              ⚠️ Falta hora
+                            </span>
+                          )}
+                        </td>
+
+                        <td>
+                          {servicio.trabajadores.length === 0 ? (
+                            <span className="sin-asignar">Sin asignar</span>
+                          ) : (
+                            <div className="trabajadores-celda">
+                              {servicio.trabajadores.map(
+                                (trabajador, trabajadorIndex) => {
+                                  const valido =
+                                    trabajador.encontrado &&
+                                    trabajador.trabajador;
+
+                                  return (
+                                    <span
+                                      key={trabajadorIndex}
+                                      className={
+                                        valido
+                                          ? "trabajador-tag"
+                                          : "trabajador-tag trabajador-desconocido"
+                                      }
+                                      title={
+                                        valido
+                                          ? trabajador.trabajador.nombre
+                                          : "Trabajador no registrado"
+                                      }
+                                    >
+                                      {valido
+                                        ? trabajador.trabajador.codigo
+                                        : `⚠️ ${
+                                            trabajador.codigo || "?"
+                                          }`}
+                                    </span>
+                                  );
+                                },
+                              )}
+                            </div>
+                          )}
+                        </td>
+
+                        <td className="col-acciones">
+                          <button
+                            type="button"
+                            className="btn-editar"
+                            onClick={() => setEditandoIndex(index)}
+                          >
+                            ✏️ Editar
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           </section>
         )}
+        </div>
+        )}
+    </>
+  );
+}
+
+function Layout() {
+  const location = useLocation();
+
+  return (
+    <div className="app">
+      <header className="header">
+        <div className="header-content">
+          <div className="header-brand">
+            <h1>Claudia Netella</h1>
+            <span className="header-etiqueta">Gestor de Horarios</span>
+          </div>
+
+          <nav className="app-nav" aria-label="Secciones">
+            <Link
+              to="/horarios"
+              className={
+                location.pathname.startsWith("/horarios")
+                  ? "btn-primary"
+                  : "btn-secondary"
+              }
+            >
+              Horarios
+            </Link>
+            <Link
+              to="/gestion"
+              className={
+                location.pathname.startsWith("/gestion")
+                  ? "btn-primary"
+                  : "btn-secondary"
+              }
+            >
+              Gestión
+            </Link>
+            <Link
+              to="/historial"
+              className={
+                location.pathname.startsWith("/historial")
+                  ? "btn-primary"
+                  : "btn-secondary"
+              }
+            >
+              Historial
+            </Link>
+          </nav>
+        </div>
+      </header>
+
+      <main className="container">
+        <Outlet />
       </main>
     </div>
+  );
+}
+
+function App() {
+  return (
+    <Routes>
+      <Route element={<Layout />}>
+        <Route path="/" element={<Navigate to="/horarios" replace />} />
+        <Route path="/horarios" element={<HorariosView />} />
+        <Route path="/gestion" element={<HorariosView />} />
+        <Route path="/historial" element={<HorariosView />} />
+        <Route path="/trabajadores" element={<TrabajadoresView />} />
+        <Route path="/trabajadores/:id" element={<TrabajadoresView />} />
+        <Route path="/facturas" element={<FacturasView />} />
+        <Route path="/facturas/casas/:id" element={<FacturasView />} />
+        <Route path="/facturas/:id" element={<FacturaDetalleView />} />
+        <Route path="*" element={<Navigate to="/horarios" replace />} />
+      </Route>
+    </Routes>
   );
 }
 
