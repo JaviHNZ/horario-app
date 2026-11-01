@@ -1,0 +1,15 @@
+# Datos personales: Excel de la empresa y salidas de la importación.
+# Nunca deben subirse al repositorio (nombres, teléfonos, direcciones).
+datos_reales/
+
+# Imágenes de horarios subidas por el usuario (multer).
+backend/uploads/
+/uploads/
+
+# Copias de seguridad de MySQL (contienen datos personales).
+backups/
+
+# Dependencias: no se versionan.
+node_modules/
+backend/node_modules/
+frontend/node_modules/
