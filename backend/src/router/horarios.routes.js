@@ -464,6 +464,32 @@ router.post("/guardar-completo", async (req, res) => {
     await connection.beginTransaction();
 
     // ----------------------------------------
+    // NO REEMPLAZAR HORARIOS YA FACTURADOS
+    // ----------------------------------------
+
+    const [horariosFacturados] = await connection.query(
+      `
+      SELECT DISTINCT fd.factura_id, f.estado
+      FROM factura_detalles fd
+      INNER JOIN facturas f ON f.id = fd.factura_id
+      INNER JOIN horarios h ON h.id = fd.horario_id
+      INNER JOIN dias d ON d.id = h.dia_id
+      WHERE d.fecha = ?
+      `,
+      [fecha],
+    );
+
+    if (horariosFacturados.length > 0) {
+      await connection.rollback();
+
+      return res.status(409).json({
+        ok: false,
+        error:
+          "No se puede reemplazar este día: algunas visitas ya están incluidas en una factura (borrador, emitida o pagada). Elimina el borrador o anula la factura antes de volver a guardar el horario.",
+      });
+    }
+
+    // ----------------------------------------
     // CREAR / OBTENER EL DÍA
     // ----------------------------------------
 
@@ -877,4 +903,58 @@ router.post("/trabajadores", async (req, res) => {
     });
   }
 });
+// PATCH /api/horarios/:id/duracion-facturable
+router.patch("/:id/duracion-facturable", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { duracion_facturable_minutos } = req.body;
+
+    let valor = null;
+
+    if (
+      duracion_facturable_minutos !== null &&
+      duracion_facturable_minutos !== undefined &&
+      duracion_facturable_minutos !== ""
+    ) {
+      const numero = Number(duracion_facturable_minutos);
+
+      if (!Number.isInteger(numero) || numero <= 0) {
+        return res.status(400).json({
+          ok: false,
+          error: "La duración facturable debe ser un número entero mayor que cero",
+        });
+      }
+
+      valor = numero;
+    }
+
+    const [resultado] = await pool.query(
+      `
+      UPDATE horarios
+      SET duracion_facturable_minutos = ?
+      WHERE id = ?
+      `,
+      [valor, id],
+    );
+
+    if (resultado.affectedRows === 0) {
+      return res.status(404).json({
+        ok: false,
+        error: "Visita no encontrada",
+      });
+    }
+
+    res.json({
+      ok: true,
+      mensaje: "Duración facturable actualizada",
+    });
+  } catch (error) {
+    console.error("Error actualizando duración facturable:", error);
+    res.status(500).json({
+      ok: false,
+      error: "Error actualizando duración facturable",
+    });
+  }
+});
+
 module.exports = router;

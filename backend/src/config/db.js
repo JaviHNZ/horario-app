@@ -7,6 +7,9 @@ const pool = mysql.createPool({
     database: process.env.DB_NAME,
     port: process.env.DB_PORT,
 
+    // Devolver DATE/TIME como texto para evitar desfases de zona horaria
+    dateStrings: true,
+
     waitForConnections: true,
     connectionLimit: 10,
     queueLimit: 0
