@@ -50,6 +50,7 @@ El proyecto está dividido en dos aplicaciones independientes:
 
 - CRUD de **casas** con todos sus datos: cliente, contacto, dirección, población, frecuencia, precio/hora, duración de referencia, facturación, observaciones, etc.
 - CRUD de **trabajadores**: nombre, apellidos, código, contacto, dirección y población.
+- Resumen diario de **horas trabajadas** por trabajador, con total del día y navegación por fecha.
 - Búsqueda y contadores en ambas listas.
 - Activación/desactivación sin borrar historial.
 - Eliminación segura de casas: solo se permite si no tienen horarios ni facturas asociados.

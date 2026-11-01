@@ -92,6 +92,28 @@ const formatearDuracionHoras = (minutos) => {
   return `${minutosAHorasInput(total)} h`;
 };
 
+// Duración trabajada en formato legible (horas y minutos).
+const formatearMinutosTrabajados = (minutos) => {
+  const total = Number(minutos) || 0;
+
+  if (total <= 0) {
+    return "0 min";
+  }
+
+  const horas = Math.floor(total / MINUTOS_POR_HORA);
+  const resto = total % MINUTOS_POR_HORA;
+
+  if (horas === 0) {
+    return `${resto} min`;
+  }
+
+  if (resto === 0) {
+    return `${horas} h`;
+  }
+
+  return `${horas} h ${resto} min`;
+};
+
 // Tipos de punto de servicio admitidos por el backend.
 const TIPOS_SERVICIO = [
   { valor: "vivienda", etiqueta: "Vivienda" },
@@ -161,6 +183,12 @@ const formatearFecha = (fecha) => {
   });
 };
 
+const aISOlocal = (fechaObj) =>
+  `${fechaObj.getFullYear()}-${String(fechaObj.getMonth() + 1).padStart(
+    2,
+    "0",
+  )}-${String(fechaObj.getDate()).padStart(2, "0")}`;
+
 const formatearHora = (hora) => {
   if (!hora) {
     return "--:--";
@@ -224,6 +252,12 @@ function HorariosView() {
   const [busquedaCasa, setBusquedaCasa] = useState("");
   const [soloPendientes, setSoloPendientes] = useState(false);
   const [busquedaTrabajador, setBusquedaTrabajador] = useState("");
+
+  // Resumen de horas trabajadas por fecha (se muestra en Gestión > Trabajadores).
+  const [fechaResumen, setFechaResumen] = useState(aISOlocal(new Date()));
+  const [resumenTrabajadores, setResumenTrabajadores] = useState([]);
+  const [cargandoResumen, setCargandoResumen] = useState(false);
+  const [errorResumen, setErrorResumen] = useState("");
 
   const [historial, setHistorial] = useState([]);
   const [diaHistorial, setDiaHistorial] = useState(null);
@@ -290,6 +324,16 @@ function HorariosView() {
         normalizarActivo(trabajador.datos_pendientes),
       ).length,
     [trabajadores],
+  );
+
+  const totalMinutosResumen = useMemo(
+    () =>
+      resumenTrabajadores.reduce(
+        (total, trabajador) =>
+          total + (Number(trabajador.minutos_trabajados) || 0),
+        0,
+      ),
+    [resumenTrabajadores],
   );
 
   // URL temporal para la vista previa de la imagen seleccionada. Se libera
@@ -367,6 +411,56 @@ function HorariosView() {
       cargarHistorial();
     });
   }, []);
+
+  useEffect(() => {
+    let activo = true;
+
+    const cargarResumen = async () => {
+      try {
+        setCargandoResumen(true);
+        setErrorResumen("");
+
+        const respuesta = await fetch(
+          `${API_BASE}/trabajadores/resumen-diario?fecha=${fechaResumen}`,
+        );
+        const datos = await respuesta.json();
+
+        if (!activo) {
+          return;
+        }
+
+        if (!respuesta.ok || !datos.ok) {
+          throw new Error(datos.error || "Error cargando el resumen de horas");
+        }
+
+        setResumenTrabajadores(datos.trabajadores || []);
+      } catch (error) {
+        if (!activo) {
+          return;
+        }
+
+        console.error(error);
+        setErrorResumen(error.message);
+        setResumenTrabajadores([]);
+      } finally {
+        if (activo) {
+          setCargandoResumen(false);
+        }
+      }
+    };
+
+    Promise.resolve().then(cargarResumen);
+
+    return () => {
+      activo = false;
+    };
+  }, [fechaResumen]);
+
+  const cambiarFechaResumen = (desplazamiento) => {
+    const nueva = new Date(`${fechaResumen}T00:00:00`);
+    nueva.setDate(nueva.getDate() + desplazamiento);
+    setFechaResumen(aISOlocal(nueva));
+  };
 
   const abrirDiaHistorial = async (diaId) => {
     try {
@@ -1681,6 +1775,111 @@ function HorariosView() {
                       )}
                     </div>
                   </form>
+                </div>
+
+                {/* RESUMEN DE HORAS TRABAJADAS */}
+
+                <div className="gestion-seccion">
+                  <div className="gestion-seccion-cabecera">
+                    <h3>Horas trabajadas</h3>
+
+                    <span className="gestion-contador">
+                      Total del día:{" "}
+                      <strong>
+                        {formatearMinutosTrabajados(totalMinutosResumen)}
+                      </strong>
+                    </span>
+                  </div>
+
+                  <div className="resumen-fecha">
+                    <label htmlFor="fecha-resumen">Fecha</label>
+
+                    <button
+                      type="button"
+                      className="btn-secondary btn-fecha"
+                      aria-label="Día anterior"
+                      onClick={() => cambiarFechaResumen(-1)}
+                    >
+                      ◀
+                    </button>
+
+                    <input
+                      id="fecha-resumen"
+                      type="date"
+                      value={fechaResumen}
+                      onChange={(event) => setFechaResumen(event.target.value)}
+                    />
+
+                    <button
+                      type="button"
+                      className="btn-secondary btn-fecha"
+                      aria-label="Día siguiente"
+                      onClick={() => cambiarFechaResumen(1)}
+                    >
+                      ▶
+                    </button>
+
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => setFechaResumen(aISOlocal(new Date()))}
+                    >
+                      Hoy
+                    </button>
+                  </div>
+
+                  {errorResumen && <div className="error">{errorResumen}</div>}
+
+                  {cargandoResumen ? (
+                    <p className="gestion-vacio">Cargando resumen...</p>
+                  ) : resumenTrabajadores.length === 0 ? (
+                    <p className="gestion-vacio">
+                      No hay trabajadores activos o no tienen horas registradas
+                      en esta fecha.
+                    </p>
+                  ) : (
+                    <div className="tabla-responsive">
+                      <table className="tabla-datos tabla-resumen">
+                        <thead>
+                          <tr>
+                            <th>Trabajador</th>
+                            <th>Código</th>
+                            <th>Horas del día</th>
+                          </tr>
+                        </thead>
+
+                        <tbody>
+                          {resumenTrabajadores.map((trabajador) => (
+                            <tr key={trabajador.id}>
+                              <td>
+                                {trabajador.nombre}
+                              </td>
+                              <td>{trabajador.codigo}</td>
+                              <td>
+                                {formatearMinutosTrabajados(
+                                  trabajador.minutos_trabajados,
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+
+                          <tr className="fila-total">
+                            <td>
+                              <strong>Total</strong>
+                            </td>
+                            <td />
+                            <td>
+                              <strong>
+                                {formatearMinutosTrabajados(
+                                  totalMinutosResumen,
+                                )}
+                              </strong>
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
 
                 {/* LISTADO DE TRABAJADORES */}

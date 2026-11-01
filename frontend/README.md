@@ -133,6 +133,7 @@ Sub-pestañas **Casas** y **Trabajadores**, con contadores.
 
 **Trabajadores**
 - Formulario de alta/edición: nombre, apellidos, código, contacto, dirección, población.
+- Resumen de **horas trabajadas** por fecha, con el total del día y navegación día anterior/siguiente/Hoy.
 - Búsqueda.
 - Listado con estado activo/inactivo y datos pendientes.
 - Activación/desactivación sin borrar historial.
