@@ -43,6 +43,8 @@ El proyecto está dividido en dos aplicaciones independientes:
 - Interfaz de revisión editable: fecha, horas, casa y trabajadores de cada servicio.
 - Eliminación de servicios individuales de la lista de revisión.
 - Alta rápida de casas no registradas desde la propia revisión, sin salir del flujo ni volver a analizar.
+- Alta manual de casas escribiendo el nombre a mano, para corregir detecciones erróneas o casas no reconocidas.
+- Botón para descartar la revisión y cargar otra imagen si se subió la foto equivocada.
 - Avisos de datos pendientes (casas o trabajadores con información incompleta).
 - Guardado transaccional de todo el día (`dias` + `horarios` + `horario_trabajadores`).
 - Protección contra sobrescribir un día que ya contiene visitas incluidas en una factura.

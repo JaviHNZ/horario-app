@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Link,
   Navigate,
@@ -274,6 +274,15 @@ function HorariosView() {
 
   // Índice del servicio cuya casa se está creando desde la revisión.
   const [casaCreandoIndex, setCasaCreandoIndex] = useState(null);
+
+  // Alta manual de una casa desde la revisión (nombre escrito a mano).
+  const [casaManualIndex, setCasaManualIndex] = useState(null);
+  const [nombreCasaManual, setNombreCasaManual] = useState("");
+  const [creandoCasaManual, setCreandoCasaManual] = useState(false);
+  const [errorCasaManual, setErrorCasaManual] = useState("");
+
+  // Permite limpiar el input de archivo para poder elegir la misma foto otra vez.
+  const inputImagenRef = useRef(null);
 
   const [fecha, setFecha] = useState(new Date().toISOString().split("T")[0]);
 
@@ -960,6 +969,32 @@ function HorariosView() {
     setPestanaHorario("analizar");
   };
 
+  // Descarta la revisión actual y vuelve a la pantalla de carga de imagen.
+  const volverACargarImagen = () => {
+    const confirmado = window.confirm(
+      "¿Descartar la revisión actual y cargar otra imagen?",
+    );
+
+    if (!confirmado) {
+      return;
+    }
+
+    setResultado(null);
+    setImagen(null);
+    setEditandoIndex(null);
+    setCasaCreandoIndex(null);
+    setCasaManualIndex(null);
+    setNombreCasaManual("");
+    setErrorCasaManual("");
+    setError("");
+    setPestanaHorario("analizar");
+
+    // Sin esto, elegir el mismo archivo otra vez no dispara el onChange.
+    if (inputImagenRef.current) {
+      inputImagenRef.current.value = "";
+    }
+  };
+
   // =========================================
   // ANALIZAR IMAGEN
   // =========================================
@@ -1052,17 +1087,143 @@ function HorariosView() {
   // CREAR CASA DESDE LA REVISIÓN
   // =========================================
 
-  const crearCasaDesdeRevision = async (servicioIndex) => {
+  // Crea la casa (o recupera la existente si el nombre ya está registrado) y
+  // la asigna al servicio indicado. Lanza un Error si algo falla.
+  const crearCasaYAsignar = async (servicioIndex, nombre) => {
+    const nombreLimpio = String(nombre || "").trim();
+
+    if (!nombreLimpio) {
+      throw new Error("Escribe el nombre de la casa.");
+    }
+
+    const respuesta = await fetch(`${API_BASE}/casas`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ nombre: nombreLimpio }),
+    });
+
+    const datos = await respuesta.json().catch(() => ({}));
+
+    let casa = null;
+
+    if (respuesta.ok && datos.ok) {
+      casa = datos.casa;
+    } else if (respuesta.status === 409) {
+      // La casa ya existe (el nombre es único): la buscamos para asignarla.
+      const respuestaCasas = await fetch(`${API_BASE}/casas`);
+      const datosCasas = await respuestaCasas.json().catch(() => ({}));
+
+      if (!respuestaCasas.ok || !datosCasas.ok) {
+        throw new Error(datos.error || "Esa casa ya existe.");
+      }
+
+      const existente = (datosCasas.casas || []).find(
+        (item) =>
+          String(item.nombre || "")
+            .trim()
+            .toLowerCase() === nombreLimpio.toLowerCase(),
+      );
+
+      if (!existente) {
+        throw new Error(datos.error || "Esa casa ya existe.");
+      }
+
+      casa = existente;
+      setCasas(datosCasas.casas || []);
+    } else {
+      throw new Error(datos.error || "Error creando la casa");
+    }
+
+    if (!casa) {
+      throw new Error("No se pudo crear la casa.");
+    }
+
+    setResultado((actual) => {
+      const servicioActual = actual?.servicios[servicioIndex];
+
+      if (!servicioActual) {
+        return actual;
+      }
+
+      const serviciosActualizados = [...actual.servicios];
+
+      serviciosActualizados[servicioIndex] = {
+        ...servicioActual,
+        casa: {
+          nombre: casa.nombre,
+          encontrada: true,
+          datos: casa,
+        },
+      };
+
+      return {
+        ...actual,
+        servicios: serviciosActualizados,
+      };
+    });
+
+    // Refrescamos el catálogo para que la casa aparezca en los desplegables.
+    setCasas((actual) =>
+      actual.some((item) => item.id === casa.id) ? actual : [...actual, casa],
+    );
+
+    return casa;
+  };
+
+  // Alta manual: el usuario escribe o corrige el nombre de la casa.
+  const abrirCasaManual = (servicioIndex) => {
     const servicio = resultado?.servicios[servicioIndex];
 
-    if (!servicio) {
+    setCasaManualIndex(servicioIndex);
+    setNombreCasaManual(String(servicio?.casa?.nombre || "").trim());
+    setErrorCasaManual("");
+  };
+
+  const cerrarCasaManual = () => {
+    if (creandoCasaManual) {
       return;
     }
 
-    const nombre = String(servicio.casa.nombre || "").trim();
+    setCasaManualIndex(null);
+    setNombreCasaManual("");
+    setErrorCasaManual("");
+  };
+
+  const confirmarCasaManual = async (event) => {
+    event.preventDefault();
+
+    const nombre = nombreCasaManual.trim();
 
     if (!nombre) {
-      setError("La casa no tiene un nombre válido.");
+      setErrorCasaManual("Escribe el nombre de la casa.");
+      return;
+    }
+
+    setCreandoCasaManual(true);
+    setErrorCasaManual("");
+
+    try {
+      await crearCasaYAsignar(casaManualIndex, nombre);
+      setCasaManualIndex(null);
+      setNombreCasaManual("");
+    } catch (error) {
+      console.error(error);
+      setErrorCasaManual(error.message);
+    } finally {
+      setCreandoCasaManual(false);
+    }
+  };
+
+  // Alta rápida: usa el nombre detectado por la IA tal cual.
+  const crearCasaDesdeRevision = async (servicioIndex) => {
+    const servicio = resultado?.servicios[servicioIndex];
+    const nombre = String(servicio?.casa?.nombre || "").trim();
+
+    // Sin nombre detectado no hay nada que crear: abrimos el alta manual.
+    if (!nombre) {
+      abrirCasaManual(servicioIndex);
       return;
     }
 
@@ -1070,60 +1231,7 @@ function HorariosView() {
     setError("");
 
     try {
-      const respuesta = await fetch(`${API_BASE}/casas`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ nombre }),
-      });
-
-      const datos = await respuesta.json();
-
-      if (!respuesta.ok || !datos.ok) {
-        throw new Error(datos.error || "Error creando la casa");
-      }
-
-      const nuevaCasa = datos.casa;
-
-      setResultado((actual) => {
-        const servicioActual = actual?.servicios[servicioIndex];
-
-        // Si la lista cambió mientras se creaba la casa, no tocamos otra fila.
-        if (!servicioActual || servicioActual.casa.nombre !== nombre) {
-          return actual;
-        }
-
-        const serviciosActualizados = [...actual.servicios];
-
-        serviciosActualizados[servicioIndex] = {
-          ...servicioActual,
-          casa: {
-            nombre: nuevaCasa.nombre,
-            encontrada: true,
-            datos: nuevaCasa,
-          },
-        };
-
-        return {
-          ...actual,
-          servicios: serviciosActualizados,
-        };
-      });
-
-      // Refrescamos el catálogo para que la casa aparezca en los desplegables.
-      setCasas((actual) =>
-        actual.some((casa) => casa.id === nuevaCasa.id)
-          ? actual
-          : [...actual, nuevaCasa],
-      );
-
-      const respuestaCasas = await fetch(`${API_BASE}/casas`);
-      const datosCasas = await respuestaCasas.json();
-
-      if (respuestaCasas.ok && datosCasas.ok) {
-        setCasas(datosCasas.casas || []);
-      }
+      await crearCasaYAsignar(servicioIndex, nombre);
     } catch (error) {
       console.error(error);
       setError(error.message);
@@ -2462,6 +2570,7 @@ function HorariosView() {
                   <div className="upload-area">
                     <input
                       id="imagen"
+                      ref={inputImagenRef}
                       type="file"
                       accept="image/*"
                       onChange={seleccionarImagen}
@@ -2589,6 +2698,16 @@ function HorariosView() {
                 >
                   {guardando ? "Guardando..." : "💾 Guardar horario"}
                 </button>
+
+                <button
+                  type="button"
+                  className="btn-volver-imagen"
+                  onClick={volverACargarImagen}
+                  disabled={guardando}
+                  title="Descartar esta revisión y cargar otra foto"
+                >
+                  ↩ Cargar otra imagen
+                </button>
               </div>
             </div>
 
@@ -2645,7 +2764,9 @@ function HorariosView() {
                             >
                               {!servicio.casa.encontrada && (
                                 <option value="">
-                                  ⚠️ {servicio.casa.nombre}
+                                  ⚠️{" "}
+                                  {servicio.casa.nombre ||
+                                    "Casa sin identificar"}
                                   {" — no registrada"}
                                 </option>
                               )}
@@ -2657,20 +2778,31 @@ function HorariosView() {
                               ))}
                             </select>
 
-                            {!servicio.casa.encontrada && (
+                            <div className="acciones-casa">
+                              {!servicio.casa.encontrada &&
+                                Boolean(servicio.casa.nombre) && (
+                                  <button
+                                    type="button"
+                                    className="btn-anadir-casa"
+                                    onClick={() =>
+                                      crearCasaDesdeRevision(index)
+                                    }
+                                    disabled={casaCreandoIndex === index}
+                                  >
+                                    {casaCreandoIndex === index
+                                      ? "Añadiendo..."
+                                      : `➕ Añadir «${servicio.casa.nombre}»`}
+                                  </button>
+                                )}
+
                               <button
                                 type="button"
-                                className="btn-anadir-casa"
-                                onClick={() =>
-                                  crearCasaDesdeRevision(index)
-                                }
-                                disabled={casaCreandoIndex === index}
+                                className="btn-anadir-casa btn-casa-manual"
+                                onClick={() => abrirCasaManual(index)}
                               >
-                                {casaCreandoIndex === index
-                                  ? "Añadiendo..."
-                                  : `➕ Añadir «${servicio.casa.nombre}»`}
+                                ✍️ Escribir nombre
                               </button>
-                            )}
+                            </div>
                           </td>
 
                           <td>
@@ -2823,7 +2955,9 @@ function HorariosView() {
                         className={tieneErrores ? "fila-con-error" : ""}
                       >
                         <td className="celda-casa">
-                          <strong>{servicio.casa.nombre}</strong>
+                          <strong>
+                            {servicio.casa.nombre || "Casa sin identificar"}
+                          </strong>
 
                           {!servicio.casa.encontrada && (
                             <span className="mini-warning">
@@ -2911,6 +3045,14 @@ function HorariosView() {
 
                             <button
                               type="button"
+                              className="btn-anadir-casa btn-casa-manual"
+                              onClick={() => abrirCasaManual(index)}
+                            >
+                              ✍️ Escribir nombre
+                            </button>
+
+                            <button
+                              type="button"
                               className="btn-editar"
                               onClick={() => setEditandoIndex(index)}
                             >
@@ -2945,6 +3087,84 @@ function HorariosView() {
         )}
         </div>
         )}
+
+      {casaManualIndex !== null && (
+        <div
+          className="modal-overlay"
+          role="presentation"
+          onClick={cerrarCasaManual}
+        >
+          <form
+            className="modal-casa"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="casa-manual-titulo"
+            onClick={(event) => event.stopPropagation()}
+            onSubmit={confirmarCasaManual}
+          >
+            <div className="modal-perfil-cabecera">
+              <div>
+                <h3 id="casa-manual-titulo">Añadir casa</h3>
+
+                <p>
+                  Escribe el nombre tal y como quieres que aparezca. Podrás
+                  completar el resto de datos en Gestión → Casas.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                className="btn-cerrar-modal"
+                aria-label="Cerrar"
+                onClick={cerrarCasaManual}
+                disabled={creandoCasaManual}
+              >
+                ×
+              </button>
+            </div>
+
+            <label className="modal-casa-label" htmlFor="nombre-casa-manual">
+              Nombre de la casa
+            </label>
+
+            <input
+              id="nombre-casa-manual"
+              className="modal-casa-input"
+              type="text"
+              value={nombreCasaManual}
+              onChange={(event) => setNombreCasaManual(event.target.value)}
+              placeholder="Ej. Bomar92 S.L"
+              autoFocus
+              disabled={creandoCasaManual}
+            />
+
+            {errorCasaManual && (
+              <div className="error" role="alert">
+                {errorCasaManual}
+              </div>
+            )}
+
+            <div className="modal-casa-acciones">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={cerrarCasaManual}
+                disabled={creandoCasaManual}
+              >
+                Cancelar
+              </button>
+
+              <button
+                type="submit"
+                className="btn-primary"
+                disabled={creandoCasaManual || !nombreCasaManual.trim()}
+              >
+                {creandoCasaManual ? "Añadiendo..." : "Añadir y asignar"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {trabajadorPerfil && (
         <div

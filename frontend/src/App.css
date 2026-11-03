@@ -2215,3 +2215,107 @@ select {
   display: block;
   margin-top: 8px;
 }
+
+/* =========================================
+   ALTA MANUAL DE CASAS DESDE LA REVISIÓN
+   ========================================= */
+
+.acciones-casa {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.fila-edicion .acciones-casa {
+  margin-top: 8px;
+}
+
+.btn-anadir-casa.btn-casa-manual {
+  border-color: #ddd6fe;
+  background: #f5f3ff;
+  color: #6d28d9;
+}
+
+.btn-anadir-casa.btn-casa-manual:hover:not(:disabled) {
+  background: #ede9fe;
+}
+
+.btn-volver-imagen {
+  height: 42px;
+  padding: 0 14px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #374151;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn-volver-imagen:hover:not(:disabled) {
+  background: #f8fafc;
+  border-color: #94a3b8;
+}
+
+.btn-volver-imagen:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.modal-casa {
+  width: 100%;
+  max-width: 460px;
+  padding: 22px;
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 24px 60px rgba(17, 24, 39, 0.25);
+}
+
+.modal-casa-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: bold;
+  color: #374151;
+}
+
+.modal-casa-input {
+  width: 100%;
+  height: 40px;
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #111827;
+  font-size: 14px;
+}
+
+.modal-casa-input:focus {
+  outline: 2px solid #bfdbfe;
+  border-color: #60a5fa;
+}
+
+.modal-casa .error {
+  margin-top: 10px;
+}
+
+.modal-casa-acciones {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+@media (max-width: 640px) {
+  .modal-casa {
+    max-height: 92vh;
+    border-radius: 16px 16px 0 0;
+    padding: 18px 16px;
+  }
+
+  .guardar-panel .btn-volver-imagen {
+    width: 100%;
+  }
+}
