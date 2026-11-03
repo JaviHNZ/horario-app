@@ -117,6 +117,7 @@ Las tres rutas renderizan el mismo componente `HorariosView`, que decide qué se
 - Selector de imagen con vista previa.
 - Botón de análisis con estado de carga y mensajes de error.
 - Tabla editable de servicios: fecha, casa, hora de inicio, hora de fin y trabajadores.
+- Botón **Eliminar** en cada servicio, tanto en la vista normal como durante la edición.
 - Marca visualmente casas o trabajadores no encontrados y datos pendientes.
 - Botón de guardado con feedback de éxito/error.
 
@@ -133,6 +134,7 @@ Sub-pestañas **Casas** y **Trabajadores**, con contadores.
 
 **Trabajadores**
 - Formulario de alta/edición: nombre, apellidos, código, contacto, dirección, población.
+- **Perfil del trabajador** al pulsar su nombre o el botón “Perfil”: modal con periodos **Día / Semana / Mes**, horas totales del periodo, servicios, casas distintas, casas realizadas y detalle de cada servicio.
 - Resumen de **horas trabajadas** por fecha, con el total del día y navegación día anterior/siguiente/Hoy.
 - Búsqueda.
 - Listado con estado activo/inactivo y datos pendientes.

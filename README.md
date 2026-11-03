@@ -41,6 +41,7 @@ El proyecto está dividido en dos aplicaciones independientes:
   - la casa debe existir en la tabla `casas`;
   - cada código de trabajador debe existir en `trabajadores`.
 - Interfaz de revisión editable: fecha, horas, casa y trabajadores de cada servicio.
+- Eliminación de servicios individuales de la lista de revisión.
 - Avisos de datos pendientes (casas o trabajadores con información incompleta).
 - Guardado transaccional de todo el día (`dias` + `horarios` + `horario_trabajadores`).
 - Protección contra sobrescribir un día que ya contiene visitas incluidas en una factura.
@@ -50,6 +51,7 @@ El proyecto está dividido en dos aplicaciones independientes:
 
 - CRUD de **casas** con todos sus datos: cliente, contacto, dirección, población, frecuencia, precio/hora, duración de referencia, facturación, observaciones, etc.
 - CRUD de **trabajadores**: nombre, apellidos, código, contacto, dirección y población.
+- Perfil de cada trabajador al pulsar su nombre: casas realizadas, servicios y horas totales con periodos **Día / Semana / Mes**.
 - Resumen diario de **horas trabajadas** por trabajador, con total del día y navegación por fecha.
 - Búsqueda y contadores en ambas listas.
 - Activación/desactivación sin borrar historial.

@@ -189,6 +189,53 @@ const aISOlocal = (fechaObj) =>
     "0",
   )}-${String(fechaObj.getDate()).padStart(2, "0")}`;
 
+// Lunes de la semana a la que pertenece una fecha (YYYY-MM-DD).
+const obtenerLunes = (fechaISO) => {
+  const fecha = new Date(`${fechaISO}T00:00:00`);
+  const diaSemana = fecha.getDay();
+  const desplazamiento = diaSemana === 0 ? -6 : 1 - diaSemana;
+
+  fecha.setDate(fecha.getDate() + desplazamiento);
+
+  return aISOlocal(fecha);
+};
+
+// Rango de fechas (desde/hasta) para el perfil de un trabajador.
+const rangoPeriodoPerfil = (periodo, fechaISO, mesISO) => {
+  if (periodo === "dia") {
+    return { desde: fechaISO, hasta: fechaISO };
+  }
+
+  if (periodo === "semana") {
+    const desde = obtenerLunes(fechaISO);
+    const hastaObj = new Date(`${desde}T00:00:00`);
+
+    hastaObj.setDate(hastaObj.getDate() + 6);
+
+    return { desde, hasta: aISOlocal(hastaObj) };
+  }
+
+  const [anio, mes] = mesISO.split("-").map(Number);
+  const ultimoDia = new Date(anio, mes, 0).getDate();
+
+  return {
+    desde: `${mesISO}-01`,
+    hasta: `${mesISO}-${String(ultimoDia).padStart(2, "0")}`,
+  };
+};
+
+const ETIQUETAS_PERIODO = {
+  dia: "Día",
+  semana: "Semana",
+  mes: "Mes",
+};
+
+const ETIQUETAS_HORAS_PERIODO = {
+  dia: "Horas del día",
+  semana: "Horas de la semana",
+  mes: "Horas del mes",
+};
+
 const formatearHora = (hora) => {
   if (!hora) {
     return "--:--";
@@ -258,6 +305,17 @@ function HorariosView() {
   const [resumenTrabajadores, setResumenTrabajadores] = useState([]);
   const [cargandoResumen, setCargandoResumen] = useState(false);
   const [errorResumen, setErrorResumen] = useState("");
+
+  // Perfil de trabajador: se abre al pulsar sobre un trabajador.
+  const [trabajadorPerfil, setTrabajadorPerfil] = useState(null);
+  const [periodoPerfil, setPeriodoPerfil] = useState("dia");
+  const [fechaPerfil, setFechaPerfil] = useState(aISOlocal(new Date()));
+  const [mesPerfil, setMesPerfil] = useState(
+    aISOlocal(new Date()).slice(0, 7),
+  );
+  const [perfilTrabajador, setPerfilTrabajador] = useState(null);
+  const [cargandoPerfil, setCargandoPerfil] = useState(false);
+  const [errorPerfil, setErrorPerfil] = useState("");
 
   const [historial, setHistorial] = useState([]);
   const [diaHistorial, setDiaHistorial] = useState(null);
@@ -335,6 +393,25 @@ function HorariosView() {
       ),
     [resumenTrabajadores],
   );
+
+  const rangoPerfilActual = useMemo(
+    () => rangoPeriodoPerfil(periodoPerfil, fechaPerfil, mesPerfil),
+    [periodoPerfil, fechaPerfil, mesPerfil],
+  );
+
+  const casasPerfil = useMemo(() => {
+    if (!perfilTrabajador) {
+      return [];
+    }
+
+    const casasUnicas = new Map();
+
+    for (const servicio of perfilTrabajador.servicios) {
+      casasUnicas.set(servicio.casa_id, servicio.casa);
+    }
+
+    return [...casasUnicas.values()];
+  }, [perfilTrabajador]);
 
   // URL temporal para la vista previa de la imagen seleccionada. Se libera
   // cuando cambia la imagen o se desmonta la vista para no acumular memoria.
@@ -461,6 +538,81 @@ function HorariosView() {
     nueva.setDate(nueva.getDate() + desplazamiento);
     setFechaResumen(aISOlocal(nueva));
   };
+
+  // =========================================
+  // PERFIL DE TRABAJADOR
+  // =========================================
+
+  const abrirPerfilTrabajador = (trabajador) => {
+    const hoy = new Date();
+
+    setTrabajadorPerfil(trabajador);
+    setPeriodoPerfil("dia");
+    setFechaPerfil(aISOlocal(hoy));
+    setMesPerfil(aISOlocal(hoy).slice(0, 7));
+    setPerfilTrabajador(null);
+    setErrorPerfil("");
+  };
+
+  const cerrarPerfilTrabajador = () => {
+    setTrabajadorPerfil(null);
+    setPerfilTrabajador(null);
+    setErrorPerfil("");
+  };
+
+  useEffect(() => {
+    if (!trabajadorPerfil) {
+      return undefined;
+    }
+
+    let activo = true;
+
+    const { desde, hasta } = rangoPeriodoPerfil(
+      periodoPerfil,
+      fechaPerfil,
+      mesPerfil,
+    );
+
+    const cargarPerfil = async () => {
+      try {
+        setCargandoPerfil(true);
+        setErrorPerfil("");
+
+        const respuesta = await fetch(
+          `${API_BASE}/trabajadores/${trabajadorPerfil.id}/perfil?desde=${desde}&hasta=${hasta}`,
+        );
+        const datos = await respuesta.json();
+
+        if (!activo) {
+          return;
+        }
+
+        if (!respuesta.ok || !datos.ok) {
+          throw new Error(datos.error || "Error cargando el perfil");
+        }
+
+        setPerfilTrabajador(datos);
+      } catch (error) {
+        if (!activo) {
+          return;
+        }
+
+        console.error(error);
+        setErrorPerfil(error.message);
+        setPerfilTrabajador(null);
+      } finally {
+        if (activo) {
+          setCargandoPerfil(false);
+        }
+      }
+    };
+
+    Promise.resolve().then(cargarPerfil);
+
+    return () => {
+      activo = false;
+    };
+  }, [trabajadorPerfil, periodoPerfil, fechaPerfil, mesPerfil]);
 
   const abrirDiaHistorial = async (diaId) => {
     try {
@@ -982,6 +1134,37 @@ function HorariosView() {
         ...actual,
         servicios: serviciosActualizados,
       };
+    });
+  };
+
+  // =========================================
+  // ELIMINAR SERVICIO (CASA) DE LA LISTA
+  // =========================================
+
+  const eliminarServicio = (servicioIndex) => {
+    setResultado((actual) => {
+      if (!actual) {
+        return actual;
+      }
+
+      return {
+        ...actual,
+        servicios: actual.servicios.filter(
+          (_, index) => index !== servicioIndex,
+        ),
+      };
+    });
+
+    setEditandoIndex((actual) => {
+      if (actual === null) {
+        return null;
+      }
+
+      if (actual === servicioIndex) {
+        return null;
+      }
+
+      return actual > servicioIndex ? actual - 1 : actual;
     });
   };
 
@@ -1931,9 +2114,16 @@ function HorariosView() {
                           >
                             <div className="item-trabajador-datos">
                               <div className="item-casa-titulo">
-                                <strong>
+                                <button
+                                  type="button"
+                                  className="btn-link btn-nombre-trabajador"
+                                  onClick={() =>
+                                    abrirPerfilTrabajador(trabajador)
+                                  }
+                                  title="Ver perfil y horas del trabajador"
+                                >
                                   {nombreCompletoTrabajador(trabajador)}
-                                </strong>
+                                </button>
 
                                 <span className="codigo-trabajador">
                                   {trabajador.codigo}
@@ -1969,6 +2159,16 @@ function HorariosView() {
                             </div>
 
                             <div className="item-acciones">
+                              <button
+                                type="button"
+                                className="btn-mini"
+                                onClick={() =>
+                                  abrirPerfilTrabajador(trabajador)
+                                }
+                              >
+                                Perfil
+                              </button>
+
                               <button
                                 type="button"
                                 className="btn-mini"
@@ -2294,7 +2494,11 @@ function HorariosView() {
                   type="button"
                   className="btn-guardar-horario"
                   onClick={guardarHorario}
-                  disabled={guardando || contarErrores() > 0}
+                  disabled={
+                    guardando ||
+                    resultado.servicios.length === 0 ||
+                    contarErrores() > 0
+                  }
                 >
                   {guardando ? "Guardando..." : "💾 Guardar horario"}
                 </button>
@@ -2485,13 +2689,23 @@ function HorariosView() {
                           </td>
 
                           <td className="col-acciones">
-                            <button
-                              type="button"
-                              className="btn-guardar-edicion"
-                              onClick={() => setEditandoIndex(null)}
-                            >
-                              ✓ Listo
-                            </button>
+                            <div className="acciones-servicio">
+                              <button
+                                type="button"
+                                className="btn-guardar-edicion"
+                                onClick={() => setEditandoIndex(null)}
+                              >
+                                ✓ Listo
+                              </button>
+
+                              <button
+                                type="button"
+                                className="btn-eliminar-servicio"
+                                onClick={() => eliminarServicio(index)}
+                              >
+                                🗑 Eliminar
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -2577,17 +2791,36 @@ function HorariosView() {
                         </td>
 
                         <td className="col-acciones">
-                          <button
-                            type="button"
-                            className="btn-editar"
-                            onClick={() => setEditandoIndex(index)}
-                          >
-                            ✏️ Editar
-                          </button>
+                          <div className="acciones-servicio">
+                            <button
+                              type="button"
+                              className="btn-editar"
+                              onClick={() => setEditandoIndex(index)}
+                            >
+                              ✏️ Editar
+                            </button>
+
+                            <button
+                              type="button"
+                              className="btn-eliminar-servicio"
+                              onClick={() => eliminarServicio(index)}
+                            >
+                              🗑 Eliminar
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
                   })}
+
+                  {resultado.servicios.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="tabla-servicios-vacia">
+                        No quedan servicios en la lista. Puedes analizar otra
+                        imagen o volver a revisar el horario.
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -2595,6 +2828,189 @@ function HorariosView() {
         )}
         </div>
         )}
+
+      {trabajadorPerfil && (
+        <div
+          className="modal-overlay"
+          role="presentation"
+          onClick={cerrarPerfilTrabajador}
+        >
+          <div
+            className="modal-perfil"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="perfil-titulo"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="modal-perfil-cabecera">
+              <div>
+                <h3 id="perfil-titulo">
+                  {nombreCompletoTrabajador(trabajadorPerfil)}
+                </h3>
+
+                <p>Código: {trabajadorPerfil.codigo}</p>
+              </div>
+
+              <button
+                type="button"
+                className="btn-cerrar-modal"
+                aria-label="Cerrar perfil"
+                onClick={cerrarPerfilTrabajador}
+              >
+                ×
+              </button>
+            </div>
+
+            <div
+              className="perfil-periodos"
+              role="tablist"
+              aria-label="Periodo del perfil"
+            >
+              {["dia", "semana", "mes"].map((periodo) => (
+                <button
+                  key={periodo}
+                  type="button"
+                  role="tab"
+                  aria-selected={periodoPerfil === periodo}
+                  className={`perfil-periodo ${
+                    periodoPerfil === periodo ? "perfil-periodo-activo" : ""
+                  }`}
+                  onClick={() => setPeriodoPerfil(periodo)}
+                >
+                  {ETIQUETAS_PERIODO[periodo]}
+                </button>
+              ))}
+            </div>
+
+            <div className="perfil-controles">
+              {periodoPerfil === "mes" ? (
+                <>
+                  <label htmlFor="mes-perfil">Mes</label>
+                  <input
+                    id="mes-perfil"
+                    type="month"
+                    value={mesPerfil}
+                    onChange={(event) => setMesPerfil(event.target.value)}
+                  />
+                </>
+              ) : (
+                <>
+                  <label htmlFor="fecha-perfil">Fecha</label>
+                  <input
+                    id="fecha-perfil"
+                    type="date"
+                    value={fechaPerfil}
+                    onChange={(event) => setFechaPerfil(event.target.value)}
+                  />
+                </>
+              )}
+
+              {periodoPerfil === "semana" && (
+                <span className="perfil-rango">
+                  {formatearFecha(rangoPerfilActual.desde)} –{" "}
+                  {formatearFecha(rangoPerfilActual.hasta)}
+                </span>
+              )}
+            </div>
+
+            {errorPerfil && <div className="error">{errorPerfil}</div>}
+
+            {cargandoPerfil ? (
+              <p className="gestion-vacio">Cargando perfil...</p>
+            ) : perfilTrabajador ? (
+              <>
+                <div className="datos-referencia perfil-resumen">
+                  <div className="dato-box">
+                    <span>
+                      {ETIQUETAS_HORAS_PERIODO[periodoPerfil]}
+                    </span>
+                    <strong>
+                      {formatearMinutosTrabajados(
+                        perfilTrabajador.total_minutos,
+                      )}
+                    </strong>
+                  </div>
+
+                  <div className="dato-box">
+                    <span>Servicios</span>
+                    <strong>{perfilTrabajador.total_servicios}</strong>
+                  </div>
+
+                  <div className="dato-box">
+                    <span>Casas distintas</span>
+                    <strong>{perfilTrabajador.casas_distintas}</strong>
+                  </div>
+                </div>
+
+                <div className="perfil-casas">
+                  <h4>Casas realizadas</h4>
+
+                  {casasPerfil.length === 0 ? (
+                    <p className="gestion-vacio">
+                      Sin casas en este periodo.
+                    </p>
+                  ) : (
+                    <div className="perfil-casas-lista">
+                      {casasPerfil.map((casa) => (
+                        <span key={casa} className="perfil-casa-chip">
+                          {casa}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="tabla-responsive">
+                  <table className="tabla-datos tabla-perfil">
+                    <thead>
+                      <tr>
+                        <th>Fecha</th>
+                        <th>Casa</th>
+                        <th>Horario</th>
+                        <th>Duración</th>
+                        <th>Otros trabajadores</th>
+                      </tr>
+                    </thead>
+
+                    <tbody>
+                      {perfilTrabajador.servicios.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="tabla-servicios-vacia">
+                            Sin servicios en este periodo.
+                          </td>
+                        </tr>
+                      ) : (
+                        perfilTrabajador.servicios.map((servicio) => (
+                          <tr key={servicio.id}>
+                            <td className="celda-fecha">
+                              {formatearFecha(servicio.fecha)}
+                            </td>
+                            <td>{servicio.casa}</td>
+                            <td className="celda-horario">
+                              {formatearHora(servicio.hora_inicio)} →{" "}
+                              {formatearHora(servicio.hora_fin)}
+                            </td>
+                            <td>
+                              {formatearMinutosTrabajados(
+                                servicio.duracion_minutos,
+                              )}
+                            </td>
+                            <td>
+                              {servicio.otros_trabajadores
+                                .map((trabajador) => trabajador.codigo)
+                                .join(", ") || "-"}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            ) : null}
+          </div>
+        </div>
+      )}
     </>
   );
 }
