@@ -42,6 +42,7 @@ El proyecto está dividido en dos aplicaciones independientes:
   - cada código de trabajador debe existir en `trabajadores`.
 - Interfaz de revisión editable: fecha, horas, casa y trabajadores de cada servicio.
 - Eliminación de servicios individuales de la lista de revisión.
+- Alta rápida de casas no registradas desde la propia revisión, sin salir del flujo ni volver a analizar.
 - Avisos de datos pendientes (casas o trabajadores con información incompleta).
 - Guardado transaccional de todo el día (`dias` + `horarios` + `horario_trabajadores`).
 - Protección contra sobrescribir un día que ya contiene visitas incluidas en una factura.

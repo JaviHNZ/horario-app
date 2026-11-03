@@ -118,6 +118,7 @@ Las tres rutas renderizan el mismo componente `HorariosView`, que decide qué se
 - Botón de análisis con estado de carga y mensajes de error.
 - Tabla editable de servicios: fecha, casa, hora de inicio, hora de fin y trabajadores.
 - Botón **Eliminar** en cada servicio, tanto en la vista normal como durante la edición.
+- Botón **Añadir casa** para casas no registradas: crea la casa con su nombre y la vincula al servicio sin salir de la revisión.
 - Marca visualmente casas o trabajadores no encontrados y datos pendientes.
 - Botón de guardado con feedback de éxito/error.
 

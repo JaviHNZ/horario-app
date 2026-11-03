@@ -272,6 +272,9 @@ function HorariosView() {
 
   const [editandoIndex, setEditandoIndex] = useState(null);
 
+  // Índice del servicio cuya casa se está creando desde la revisión.
+  const [casaCreandoIndex, setCasaCreandoIndex] = useState(null);
+
   const [fecha, setFecha] = useState(new Date().toISOString().split("T")[0]);
 
   const [guardando, setGuardando] = useState(false);
@@ -1043,6 +1046,90 @@ function HorariosView() {
         servicios: serviciosActualizados,
       };
     });
+  };
+
+  // =========================================
+  // CREAR CASA DESDE LA REVISIÓN
+  // =========================================
+
+  const crearCasaDesdeRevision = async (servicioIndex) => {
+    const servicio = resultado?.servicios[servicioIndex];
+
+    if (!servicio) {
+      return;
+    }
+
+    const nombre = String(servicio.casa.nombre || "").trim();
+
+    if (!nombre) {
+      setError("La casa no tiene un nombre válido.");
+      return;
+    }
+
+    setCasaCreandoIndex(servicioIndex);
+    setError("");
+
+    try {
+      const respuesta = await fetch(`${API_BASE}/casas`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ nombre }),
+      });
+
+      const datos = await respuesta.json();
+
+      if (!respuesta.ok || !datos.ok) {
+        throw new Error(datos.error || "Error creando la casa");
+      }
+
+      const nuevaCasa = datos.casa;
+
+      setResultado((actual) => {
+        const servicioActual = actual?.servicios[servicioIndex];
+
+        // Si la lista cambió mientras se creaba la casa, no tocamos otra fila.
+        if (!servicioActual || servicioActual.casa.nombre !== nombre) {
+          return actual;
+        }
+
+        const serviciosActualizados = [...actual.servicios];
+
+        serviciosActualizados[servicioIndex] = {
+          ...servicioActual,
+          casa: {
+            nombre: nuevaCasa.nombre,
+            encontrada: true,
+            datos: nuevaCasa,
+          },
+        };
+
+        return {
+          ...actual,
+          servicios: serviciosActualizados,
+        };
+      });
+
+      // Refrescamos el catálogo para que la casa aparezca en los desplegables.
+      setCasas((actual) =>
+        actual.some((casa) => casa.id === nuevaCasa.id)
+          ? actual
+          : [...actual, nuevaCasa],
+      );
+
+      const respuestaCasas = await fetch(`${API_BASE}/casas`);
+      const datosCasas = await respuestaCasas.json();
+
+      if (respuestaCasas.ok && datosCasas.ok) {
+        setCasas(datosCasas.casas || []);
+      }
+    } catch (error) {
+      console.error(error);
+      setError(error.message);
+    } finally {
+      setCasaCreandoIndex(null);
+    }
   };
 
   // =========================================
@@ -2569,6 +2656,21 @@ function HorariosView() {
                                 </option>
                               ))}
                             </select>
+
+                            {!servicio.casa.encontrada && (
+                              <button
+                                type="button"
+                                className="btn-anadir-casa"
+                                onClick={() =>
+                                  crearCasaDesdeRevision(index)
+                                }
+                                disabled={casaCreandoIndex === index}
+                              >
+                                {casaCreandoIndex === index
+                                  ? "Añadiendo..."
+                                  : `➕ Añadir «${servicio.casa.nombre}»`}
+                              </button>
+                            )}
                           </td>
 
                           <td>
@@ -2792,6 +2894,21 @@ function HorariosView() {
 
                         <td className="col-acciones">
                           <div className="acciones-servicio">
+                            {!servicio.casa.encontrada && (
+                              <button
+                                type="button"
+                                className="btn-anadir-casa"
+                                onClick={() =>
+                                  crearCasaDesdeRevision(index)
+                                }
+                                disabled={casaCreandoIndex === index}
+                              >
+                                {casaCreandoIndex === index
+                                  ? "Añadiendo..."
+                                  : "➕ Añadir casa"}
+                              </button>
+                            )}
+
                             <button
                               type="button"
                               className="btn-editar"

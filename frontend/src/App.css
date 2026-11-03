@@ -2188,3 +2188,30 @@ select {
     flex-direction: column;
   }
 }
+
+.btn-anadir-casa {
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn-anadir-casa:hover:not(:disabled) {
+  background: #dbeafe;
+}
+
+.btn-anadir-casa:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.fila-edicion .btn-anadir-casa {
+  display: block;
+  margin-top: 8px;
+}
