@@ -2413,10 +2413,6 @@ function HorariosView() {
               <p className="gestion-vacio">Cargando historial...</p>
             ) : historial.length === 0 ? (
               <div className="estado-vacio">
-                <span className="estado-vacio-icono" aria-hidden="true">
-                  🗓️
-                </span>
-
                 <h3>Todavía no hay horarios guardados</h3>
 
                 <p>
@@ -2683,7 +2679,7 @@ function HorariosView() {
                 >
                   {contarErrores() > 0
                     ? `${contarErrores()} pendientes`
-                    : "✓ Todo correcto"}
+                    : "Todo correcto"}
                 </div>
 
                 <button
@@ -2696,7 +2692,7 @@ function HorariosView() {
                     contarErrores() > 0
                   }
                 >
-                  {guardando ? "Guardando..." : "💾 Guardar horario"}
+                  {guardando ? "Guardando..." : "Guardar horario"}
                 </button>
 
                 <button
@@ -2706,7 +2702,7 @@ function HorariosView() {
                   disabled={guardando}
                   title="Descartar esta revisión y cargar otra foto"
                 >
-                  ↩ Cargar otra imagen
+                  ← Cargar otra imagen
                 </button>
               </div>
             </div>
@@ -2764,7 +2760,6 @@ function HorariosView() {
                             >
                               {!servicio.casa.encontrada && (
                                 <option value="">
-                                  ⚠️{" "}
                                   {servicio.casa.nombre ||
                                     "Casa sin identificar"}
                                   {" — no registrada"}
@@ -2791,7 +2786,7 @@ function HorariosView() {
                                   >
                                     {casaCreandoIndex === index
                                       ? "Añadiendo..."
-                                      : `➕ Añadir «${servicio.casa.nombre}»`}
+                                      : `Añadir «${servicio.casa.nombre}»`}
                                   </button>
                                 )}
 
@@ -2800,7 +2795,7 @@ function HorariosView() {
                                 className="btn-anadir-casa btn-casa-manual"
                                 onClick={() => abrirCasaManual(index)}
                               >
-                                ✍️ Escribir nombre
+                                Escribir nombre
                               </button>
                             </div>
                           </td>
@@ -2874,7 +2869,6 @@ function HorariosView() {
                                     >
                                       {!trabajador.encontrado && (
                                         <option value="">
-                                          ⚠️{" "}
                                           {trabajador.codigo ||
                                             "Sin seleccionar"}
                                           {" — no registrado"}
@@ -2929,7 +2923,7 @@ function HorariosView() {
                                 className="btn-guardar-edicion"
                                 onClick={() => setEditandoIndex(null)}
                               >
-                                ✓ Listo
+                                Listo
                               </button>
 
                               <button
@@ -2937,7 +2931,7 @@ function HorariosView() {
                                 className="btn-eliminar-servicio"
                                 onClick={() => eliminarServicio(index)}
                               >
-                                🗑 Eliminar
+                                Eliminar
                               </button>
                             </div>
                           </td>
@@ -2961,7 +2955,7 @@ function HorariosView() {
 
                           {!servicio.casa.encontrada && (
                             <span className="mini-warning">
-                              ⚠️ No registrada
+                              No registrada
                             </span>
                           )}
                         </td>
@@ -2973,7 +2967,7 @@ function HorariosView() {
 
                           {!servicio.hora_inicio && (
                             <span className="mini-warning">
-                              ⚠️ Falta hora
+                              Falta hora
                             </span>
                           )}
                         </td>
@@ -2983,7 +2977,7 @@ function HorariosView() {
 
                           {!servicio.hora_fin && (
                             <span className="mini-warning">
-                              ⚠️ Falta hora
+                              Falta hora
                             </span>
                           )}
                         </td>
@@ -3015,9 +3009,7 @@ function HorariosView() {
                                     >
                                       {valido
                                         ? trabajador.trabajador.codigo
-                                        : `⚠️ ${
-                                            trabajador.codigo || "?"
-                                          }`}
+                                        : trabajador.codigo || "?"}
                                     </span>
                                   );
                                 },
@@ -3039,7 +3031,7 @@ function HorariosView() {
                               >
                                 {casaCreandoIndex === index
                                   ? "Añadiendo..."
-                                  : "➕ Añadir casa"}
+                                  : "Añadir casa"}
                               </button>
                             )}
 
@@ -3048,7 +3040,7 @@ function HorariosView() {
                               className="btn-anadir-casa btn-casa-manual"
                               onClick={() => abrirCasaManual(index)}
                             >
-                              ✍️ Escribir nombre
+                              Escribir nombre
                             </button>
 
                             <button
@@ -3056,7 +3048,7 @@ function HorariosView() {
                               className="btn-editar"
                               onClick={() => setEditandoIndex(index)}
                             >
-                              ✏️ Editar
+                              Editar
                             </button>
 
                             <button
@@ -3064,7 +3056,7 @@ function HorariosView() {
                               className="btn-eliminar-servicio"
                               onClick={() => eliminarServicio(index)}
                             >
-                              🗑 Eliminar
+                              Eliminar
                             </button>
                           </div>
                         </td>

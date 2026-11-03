@@ -572,7 +572,7 @@ export default function FacturasView() {
                           <td>
                             {visita.pendiente_revision ? (
                               <span className="mini-warning">
-                                ⚠️ Pendiente de revisión
+                                Pendiente de revisión
                               </span>
                             ) : (
                               formatearMinutos(visita.duracion_resuelta_minutos)
@@ -661,7 +661,7 @@ export default function FacturasView() {
               </span>
               {hayDuracionDesconocida && (
                 <span className="mini-warning">
-                  ⚠️ Hay visitas seleccionadas con duración desconocida.
+                  Hay visitas seleccionadas con duración desconocida.
                 </span>
               )}
             </div>
