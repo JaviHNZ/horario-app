@@ -42,6 +42,7 @@ El proyecto está dividido en dos aplicaciones independientes:
   - cada código de trabajador debe existir en `trabajadores`.
 - Interfaz de revisión editable: fecha, horas, casa y trabajadores de cada servicio.
 - Eliminación de servicios individuales de la lista de revisión.
+- Fila vacía permanente al final de la revisión para añadir casas que la IA no haya detectado (seleccionando una casa existente o escribiendo su nombre), con horas, trabajadores y duración real.
 - Alta rápida de casas no registradas desde la propia revisión, sin salir del flujo ni volver a analizar.
 - Alta manual de casas escribiendo el nombre a mano, para corregir detecciones erróneas o casas no reconocidas.
 - Botón para descartar la revisión y cargar otra imagen si se subió la foto equivocada.
@@ -49,12 +50,15 @@ El proyecto está dividido en dos aplicaciones independientes:
 - Guardado transaccional de todo el día (`dias` + `horarios` + `horario_trabajadores`).
 - Protección contra sobrescribir un día que ya contiene visitas incluidas en una factura.
 - Historial de días guardados con detalle de servicios y trabajadores.
+- Eliminación de un día completo del historial con confirmación por fecha; borra sus servicios y asignaciones, nunca casas ni trabajadores.
 
 ### Gestión
 
 - CRUD de **casas** con todos sus datos: cliente, contacto, dirección, población, frecuencia, precio/hora, duración de referencia, facturación, observaciones, etc.
 - CRUD de **trabajadores**: nombre, apellidos, código, contacto, dirección y población.
 - Perfil de cada trabajador al pulsar su nombre: casas realizadas, servicios y horas totales con periodos **Día / Semana / Mes**.
+- Perfil de cada casa al pulsar su nombre o su botón **Perfil**: fechas de servicio, horas reales por fecha, trabajadores y total acumulado, con periodos **Día / Semana / Mes** y total histórico.
+- Las horas de las casas y de los trabajadores se calculan con los horarios reales guardados (`hora_inicio`/`hora_fin`), nunca con `casas.duracion_minutos`.
 - Resumen diario de **horas trabajadas** por trabajador, con total del día y navegación por fecha.
 - Búsqueda y contadores en ambas listas.
 - Activación/desactivación sin borrar historial.
@@ -64,6 +68,7 @@ El proyecto está dividido en dos aplicaciones independientes:
 
 - Listado de días con fecha, archivo original, estado y número de servicios.
 - Detalle de cada día con sus servicios y trabajadores asignados.
+- Botón **Eliminar** por día con confirmación que indica la fecha y cuántos servicios se borrarán.
 
 ### Facturación (aplazada)
 
@@ -289,10 +294,10 @@ El DDL completo y las relaciones están en [`backend/README.md`](backend/README.
 ## Flujo de trabajo principal
 
 1. **Analizar** — sube una foto del horario.
-2. **Revisar** — corrige fecha, horas, casas y trabajadores; la interfaz marca lo que no se pudo validar.
+2. **Revisar** — corrige fecha, horas, casas y trabajadores; la interfaz marca lo que no se pudo validar. La última fila siempre está vacía para añadir una casa que la IA no haya detectado.
 3. **Guardar** — se crea o reemplaza el día completo de forma transaccional.
-4. **Historial** — consulta los días guardados y su detalle.
-5. **Gestión** — mantén actualizados casas y trabajadores.
+4. **Historial** — consulta los días guardados, su detalle, o elimina un día completo con confirmación.
+5. **Gestión** — mantén actualizados casas y trabajadores, y consulta sus perfiles de horas.
 
 ---
 
@@ -308,7 +313,9 @@ Resumen de endpoints (detalle completo en [`backend/README.md`](backend/README.m
 | `POST` | `/api/horarios/guardar-completo` | Guarda un día completo. |
 | `GET` | `/api/horarios/historial` | Lista los días guardados. |
 | `GET` | `/api/horarios/historial/:diaId` | Detalle de un día. |
+| `DELETE` | `/api/horarios/historial/:diaId` | Elimina un día completo (servicios y asignaciones; bloquea si hay facturas). |
 | `GET/POST/PUT/PATCH/DELETE` | `/api/casas` | CRUD de casas. |
+| `GET` | `/api/casas/:id/perfil` | Horas reales, servicios y trabajadores de una casa por periodo, más total histórico. |
 | `GET/POST/PUT/PATCH` | `/api/trabajadores` | CRUD de trabajadores. |
 | `GET` | `/api/trabajadores/resumen-diario` | Minutos trabajados por día. |
 | `GET` | `/api/trabajadores/:id/perfil` | Perfil y actividad de un trabajador. |

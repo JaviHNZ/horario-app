@@ -735,4 +735,161 @@ router.get("/:id/visitas", async (req, res) => {
   }
 });
 
+// GET /api/casas/:id/perfil?desde=&hasta=&mes=&anio=
+// Horas reales trabajadas en una casa, calculadas con los horarios guardados
+// (nunca con la duración de referencia de la casa).
+router.get("/:id/perfil", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { mes, anio, desde, hasta } = req.query;
+
+    const [casas] = await db.query(
+      `
+      SELECT ${COLUMNAS_CASA}
+      FROM casas
+      WHERE id = ?
+      `,
+      [id],
+    );
+
+    if (casas.length === 0) {
+      return res.status(404).json({
+        ok: false,
+        error: "Casa no encontrada",
+      });
+    }
+
+    const casa = casas[0];
+
+    let where = "h.casa_id = ?";
+    const params = [id];
+
+    if (desde && hasta) {
+      where += " AND d.fecha BETWEEN ? AND ?";
+      params.push(desde, hasta);
+    } else if (mes && anio) {
+      where += " AND MONTH(d.fecha) = ? AND YEAR(d.fecha) = ?";
+      params.push(Number(mes), Number(anio));
+    }
+
+    const [servicios] = await db.query(
+      `
+      SELECT
+        h.id,
+        d.fecha,
+        h.hora_inicio,
+        h.hora_fin
+      FROM horarios h
+      INNER JOIN dias d ON d.id = h.dia_id
+      WHERE ${where}
+      ORDER BY d.fecha DESC, h.hora_inicio ASC
+      `,
+      params,
+    );
+
+    const ids = servicios.map((servicio) => servicio.id);
+    const trabajadoresPorHorario = {};
+
+    if (ids.length > 0) {
+      const [trabajadores] = await db.query(
+        `
+        SELECT ht.horario_id, t.id, t.nombre, t.codigo
+        FROM horario_trabajadores ht
+        INNER JOIN trabajadores t ON t.id = ht.trabajador_id
+        WHERE ht.horario_id IN (?)
+        ORDER BY t.codigo ASC
+        `,
+        [ids],
+      );
+
+      for (const fila of trabajadores) {
+        if (!trabajadoresPorHorario[fila.horario_id]) {
+          trabajadoresPorHorario[fila.horario_id] = [];
+        }
+
+        trabajadoresPorHorario[fila.horario_id].push({
+          id: fila.id,
+          nombre: fila.nombre,
+          codigo: fila.codigo,
+        });
+      }
+    }
+
+    const calcularMinutos = (inicio, fin) => {
+      const [h1, m1] = String(inicio).slice(0, 5).split(":").map(Number);
+      const [h2, m2] = String(fin).slice(0, 5).split(":").map(Number);
+      let minutos = h2 * 60 + m2 - (h1 * 60 + m1);
+
+      if (minutos < 0) {
+        minutos += 1440;
+      }
+
+      return minutos;
+    };
+
+    const serviciosMapeados = servicios.map((servicio) => ({
+      id: servicio.id,
+      fecha: servicio.fecha,
+      hora_inicio: servicio.hora_inicio,
+      hora_fin: servicio.hora_fin,
+      duracion_minutos: calcularMinutos(
+        servicio.hora_inicio,
+        servicio.hora_fin,
+      ),
+      trabajadores: trabajadoresPorHorario[servicio.id] || [],
+    }));
+
+    const totalMinutos = serviciosMapeados.reduce(
+      (acumulado, servicio) => acumulado + servicio.duracion_minutos,
+      0,
+    );
+
+    const trabajadoresDistintos = new Set(
+      serviciosMapeados.flatMap((servicio) =>
+        servicio.trabajadores.map((trabajador) => trabajador.id),
+      ),
+    ).size;
+
+    // Totales de toda la vida de la casa, independientes del periodo.
+    const [historico] = await db.query(
+      `
+      SELECT
+        COUNT(*) AS total_servicios,
+        COALESCE(
+          SUM(
+            CASE
+              WHEN h.hora_fin < h.hora_inicio
+                THEN TIMESTAMPDIFF(MINUTE, h.hora_inicio, h.hora_fin) + 1440
+              ELSE TIMESTAMPDIFF(MINUTE, h.hora_inicio, h.hora_fin)
+            END
+          ),
+          0
+        ) AS total_minutos
+      FROM horarios h
+      WHERE h.casa_id = ?
+      `,
+      [id],
+    );
+
+    res.json({
+      ok: true,
+      casa,
+      total_minutos: totalMinutos,
+      total_servicios: serviciosMapeados.length,
+      trabajadores_distintos: trabajadoresDistintos,
+      total_minutos_historico: Number(historico[0].total_minutos) || 0,
+      total_servicios_historico: Number(historico[0].total_servicios) || 0,
+      servicios: serviciosMapeados,
+    });
+  } catch (error) {
+    console.error("Error obteniendo perfil de casa:", error);
+
+    res.status(500).json({
+      ok: false,
+      error: "Error obteniendo perfil de casa",
+    });
+  }
+});
+
 module.exports = router;
+

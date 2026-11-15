@@ -118,11 +118,12 @@ Las tres rutas renderizan el mismo componente `HorariosView`, que decide qué se
 - Botón de análisis con estado de carga y mensajes de error.
 - Tabla editable de servicios: fecha, casa, hora de inicio, hora de fin y trabajadores.
 - Botón **Eliminar** en cada servicio, tanto en la vista normal como durante la edición.
+- Fila manual permanente al final de la tabla: permite seleccionar una casa existente o escribir una nueva, indicar horas y trabajadores y pulsar **Añadir servicio**; se comporta igual que una fila detectada y se puede repetir para varias casas.
 - Botón **Añadir casa** para casas no registradas: crea la casa con su nombre y la vincula al servicio sin salir de la revisión.
 - Botón **Escribir nombre** para dar de alta una casa manualmente (por ejemplo si la IA no la reconoce o la confunde); admite corregir el nombre y reutiliza la casa si ya existe.
 - Botón **Cargar otra imagen** junto a **Guardar horario** para descartar la revisión y volver a subir una foto.
 - Marca visualmente casas o trabajadores no encontrados y datos pendientes.
-- Botón de guardado con feedback de éxito/error.
+- Botón de guardado con feedback de éxito/error; si la fila manual tiene datos completos se guarda junto al resto aunque no se haya pulsado **Añadir servicio**.
 
 ### `HorariosView` — sección Gestión
 
@@ -132,7 +133,8 @@ Sub-pestañas **Casas** y **Trabajadores**, con contadores.
 - Formulario de alta/edición con todos los campos.
 - Búsqueda por texto.
 - Filtro de solo pendientes.
-- Listado con estado activo/inactivo, datos pendientes y acciones editar/activar/eliminar.
+- Listado con estado activo/inactivo, datos pendientes y acciones perfil/editar/activar/eliminar.
+- **Perfil de la casa** al pulsar su nombre o el botón “Perfil”: modal con periodos **Día / Semana / Mes**, horas reales del periodo, servicios, trabajadores distintos, total histórico y detalle de cada servicio con sus trabajadores. Las horas salen de `hora_inicio`/`hora_fin`, no de la duración de referencia.
 - Eliminación con confirmación; si la API responde `409`, se ofrece desactivar.
 
 **Trabajadores**
@@ -149,6 +151,7 @@ En ambas, el formulario aparece **encima** del listado.
 
 - Lista de días guardados con fecha, archivo, estado y número de servicios.
 - Selección de un día para ver su detalle y los trabajadores de cada servicio.
+- Botón **Eliminar** por día con confirmación que indica la fecha y el número de servicios; borra el día, sus servicios y asignaciones (nunca casas ni trabajadores) y refresca los totales.
 
 ### Vistas heredadas
 
@@ -163,10 +166,11 @@ Todo el estado principal vive en `HorariosView`:
 
 | Grupo | Estado |
 | --- | --- |
-| Análisis | `imagen`, `cargando`, `resultado`, `error`, `pestanaHorario`, `editandoIndex`, `fecha`, `guardando` |
+| Análisis | `imagen`, `cargando`, `resultado`, `error`, `pestanaHorario`, `editandoIndex`, `fecha`, `guardando`, `servicioManual` |
 | Catálogos | `casas`, `trabajadores`, `cargandoDatos` |
 | Gestión | `pestanaGestion`, `nuevaCasa`, `nuevoTrabajador`, `casaEditando`, `trabajadorEditando`, `busquedaCasa`, `busquedaTrabajador`, `soloPendientes` |
-| Historial | `historial`, `diaHistorial`, `serviciosHistorial`, `cargandoHistorial` |
+| Perfiles | `trabajadorPerfil`, `periodoPerfil`, `fechaPerfil`, `mesPerfil`, `perfilTrabajador`; `casaPerfil`, `periodoPerfilCasa`, `fechaPerfilCasa`, `mesPerfilCasa`, `perfilCasa` |
+| Historial | `historial`, `diaHistorial`, `serviciosHistorial`, `cargandoHistorial`, `eliminandoDiaId` |
 
 Flujo típico:
 
@@ -188,10 +192,10 @@ Todas las llamadas usan `fetch` contra `API_BASE`.
 | Cargar catálogos | `GET /casas`, `GET /trabajadores` |
 | Analizar imagen | `POST /horarios/analizar` (multipart) |
 | Guardar día | `POST /horarios/guardar-completo` |
-| Historial | `GET /horarios/historial`, `GET /horarios/historial/:id` |
-| Casas | `POST/PUT/PATCH/DELETE /casas` |
+| Historial | `GET /horarios/historial`, `GET /horarios/historial/:id`, `DELETE /horarios/historial/:id` |
+| Casas | `POST/PUT/PATCH/DELETE /casas`, `GET /casas/:id/perfil` |
 | Trabajadores | `POST/PUT/PATCH /trabajadores` |
-| Resumen/perfil | `GET /trabajadores/resumen-diario`, `GET /trabajadores/:id/perfil` |
+| Resumen/perfil | `GET /trabajadores/resumen-diario`, `GET /trabajadores/:id/perfil`, `GET /casas/:id/perfil` |
 | Facturación | `/casas/resumen-facturacion`, `/casas/:id/visitas`, `/facturas/*` |
 
 La interfaz normaliza `activo` y `datos_pendientes` porque MySQL los devuelve como `tinyint` (`1`/`0`).

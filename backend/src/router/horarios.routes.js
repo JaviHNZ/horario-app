@@ -739,6 +739,99 @@ router.get("/historial/:diaId", async (req, res) => {
     });
   }
 });
+// DELETE /api/horarios/historial/:diaId
+// Elimina el día completo. La FK de horarios -> dias es ON DELETE CASCADE y
+// la de horario_trabajadores -> horarios también, así que desaparecen los
+// servicios y sus asignaciones sin tocar casas ni trabajadores.
+router.delete("/historial/:diaId", async (req, res) => {
+  const connection = await pool.getConnection();
+
+  try {
+    const { diaId } = req.params;
+
+    await connection.beginTransaction();
+
+    const [dias] = await connection.query(
+      `
+      SELECT id, fecha
+      FROM dias
+      WHERE id = ?
+      `,
+      [diaId],
+    );
+
+    if (dias.length === 0) {
+      await connection.rollback();
+
+      return res.status(404).json({
+        ok: false,
+        error: "Día no encontrado",
+      });
+    }
+
+    // Si alguna visita está en una factura, la FK RESTRICT impediría el
+    // borrado. Se comprueba antes para devolver un mensaje claro.
+    const [facturados] = await connection.query(
+      `
+      SELECT DISTINCT f.id, f.estado
+      FROM factura_detalles fd
+      INNER JOIN facturas f ON f.id = fd.factura_id
+      INNER JOIN horarios h ON h.id = fd.horario_id
+      WHERE h.dia_id = ?
+      `,
+      [diaId],
+    );
+
+    if (facturados.length > 0) {
+      await connection.rollback();
+
+      return res.status(409).json({
+        ok: false,
+        error:
+          "No se puede eliminar este día: algunas visitas están incluidas en una factura. Elimina el borrador o anula la factura antes de borrar el día.",
+      });
+    }
+
+    const [servicios] = await connection.query(
+      `
+      SELECT COUNT(*) AS total
+      FROM horarios
+      WHERE dia_id = ?
+      `,
+      [diaId],
+    );
+
+    await connection.query(
+      `
+      DELETE FROM dias
+      WHERE id = ?
+      `,
+      [diaId],
+    );
+
+    await connection.commit();
+
+    res.json({
+      ok: true,
+      mensaje: "Día eliminado correctamente",
+      dia_id: Number(diaId),
+      fecha: dias[0].fecha,
+      servicios_eliminados: Number(servicios[0].total),
+    });
+  } catch (error) {
+    await connection.rollback();
+
+    console.error("Error eliminando día del historial:", error);
+
+    res.status(500).json({
+      ok: false,
+      error: "Error eliminando el día del historial",
+    });
+  } finally {
+    connection.release();
+  }
+});
+
 // ============================================
 // CASAS
 // ============================================

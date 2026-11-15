@@ -244,6 +244,35 @@ const formatearHora = (hora) => {
   return String(hora).slice(0, 5);
 };
 
+// Fila vacía que siempre aparece al final de la revisión para añadir una casa
+// que la IA no haya detectado.
+const crearServicioManualVacio = () => ({
+  casa: { nombre: "", encontrada: false, datos: null },
+  hora_inicio: "",
+  hora_fin: "",
+  trabajadores: [],
+});
+
+const servicioManualTieneDatos = (servicio) =>
+  Boolean(
+    servicio.casa?.datos ||
+      servicio.hora_inicio ||
+      servicio.hora_fin ||
+      servicio.trabajadores.length > 0,
+  );
+
+const servicioManualCompleto = (servicio) =>
+  Boolean(
+    servicio.casa?.encontrada &&
+      servicio.casa?.datos &&
+      servicio.hora_inicio &&
+      servicio.hora_fin &&
+      servicio.trabajadores.length > 0 &&
+      servicio.trabajadores.every(
+        (trabajador) => trabajador.encontrado && trabajador.trabajador,
+      ),
+  );
+
 function HorariosView() {
   const location = useLocation();
 
@@ -274,6 +303,11 @@ function HorariosView() {
 
   // Índice del servicio cuya casa se está creando desde la revisión.
   const [casaCreandoIndex, setCasaCreandoIndex] = useState(null);
+
+  // Fila manual siempre disponible al final de la revisión.
+  const [servicioManual, setServicioManual] = useState(
+    crearServicioManualVacio,
+  );
 
   // Alta manual de una casa desde la revisión (nombre escrito a mano).
   const [casaManualIndex, setCasaManualIndex] = useState(null);
@@ -329,10 +363,23 @@ function HorariosView() {
   const [cargandoPerfil, setCargandoPerfil] = useState(false);
   const [errorPerfil, setErrorPerfil] = useState("");
 
+  // Perfil de casa: se abre al pulsar sobre el nombre de una casa.
+  const [casaPerfil, setCasaPerfil] = useState(null);
+  const [periodoPerfilCasa, setPeriodoPerfilCasa] = useState("mes");
+  const [fechaPerfilCasa, setFechaPerfilCasa] = useState(aISOlocal(new Date()));
+  const [mesPerfilCasa, setMesPerfilCasa] = useState(
+    aISOlocal(new Date()).slice(0, 7),
+  );
+  const [perfilCasa, setPerfilCasa] = useState(null);
+  const [cargandoPerfilCasa, setCargandoPerfilCasa] = useState(false);
+  const [errorPerfilCasa, setErrorPerfilCasa] = useState("");
+
   const [historial, setHistorial] = useState([]);
   const [diaHistorial, setDiaHistorial] = useState(null);
   const [serviciosHistorial, setServiciosHistorial] = useState([]);
   const [cargandoHistorial, setCargandoHistorial] = useState(false);
+  const [eliminandoDiaId, setEliminandoDiaId] = useState(null);
+  const [recargaResumen, setRecargaResumen] = useState(0);
 
   const casasActivas = useMemo(
     () => casas.filter((casa) => normalizarActivo(casa.activo)),
@@ -409,6 +456,11 @@ function HorariosView() {
   const rangoPerfilActual = useMemo(
     () => rangoPeriodoPerfil(periodoPerfil, fechaPerfil, mesPerfil),
     [periodoPerfil, fechaPerfil, mesPerfil],
+  );
+
+  const rangoPerfilCasaActual = useMemo(
+    () => rangoPeriodoPerfil(periodoPerfilCasa, fechaPerfilCasa, mesPerfilCasa),
+    [periodoPerfilCasa, fechaPerfilCasa, mesPerfilCasa],
   );
 
   const casasPerfil = useMemo(() => {
@@ -543,7 +595,7 @@ function HorariosView() {
     return () => {
       activo = false;
     };
-  }, [fechaResumen]);
+  }, [fechaResumen, recargaResumen]);
 
   const cambiarFechaResumen = (desplazamiento) => {
     const nueva = new Date(`${fechaResumen}T00:00:00`);
@@ -626,6 +678,81 @@ function HorariosView() {
     };
   }, [trabajadorPerfil, periodoPerfil, fechaPerfil, mesPerfil]);
 
+  // =========================================
+  // PERFIL DE CASA
+  // =========================================
+
+  const abrirPerfilCasa = (casa) => {
+    const hoy = new Date();
+
+    setCasaPerfil(casa);
+    setPeriodoPerfilCasa("mes");
+    setFechaPerfilCasa(aISOlocal(hoy));
+    setMesPerfilCasa(aISOlocal(hoy).slice(0, 7));
+    setPerfilCasa(null);
+    setErrorPerfilCasa("");
+  };
+
+  const cerrarPerfilCasa = () => {
+    setCasaPerfil(null);
+    setPerfilCasa(null);
+    setErrorPerfilCasa("");
+  };
+
+  useEffect(() => {
+    if (!casaPerfil) {
+      return undefined;
+    }
+
+    let activo = true;
+
+    const { desde, hasta } = rangoPeriodoPerfil(
+      periodoPerfilCasa,
+      fechaPerfilCasa,
+      mesPerfilCasa,
+    );
+
+    const cargarPerfil = async () => {
+      try {
+        setCargandoPerfilCasa(true);
+        setErrorPerfilCasa("");
+
+        const respuesta = await fetch(
+          `${API_BASE}/casas/${casaPerfil.id}/perfil?desde=${desde}&hasta=${hasta}`,
+        );
+        const datos = await respuesta.json();
+
+        if (!activo) {
+          return;
+        }
+
+        if (!respuesta.ok || !datos.ok) {
+          throw new Error(datos.error || "Error cargando el perfil de la casa");
+        }
+
+        setPerfilCasa(datos);
+      } catch (error) {
+        if (!activo) {
+          return;
+        }
+
+        console.error(error);
+        setErrorPerfilCasa(error.message);
+        setPerfilCasa(null);
+      } finally {
+        if (activo) {
+          setCargandoPerfilCasa(false);
+        }
+      }
+    };
+
+    Promise.resolve().then(cargarPerfil);
+
+    return () => {
+      activo = false;
+    };
+  }, [casaPerfil, periodoPerfilCasa, fechaPerfilCasa, mesPerfilCasa]);
+
   const abrirDiaHistorial = async (diaId) => {
     try {
       setCargandoHistorial(true);
@@ -645,6 +772,46 @@ function HorariosView() {
       setError(error.message);
     } finally {
       setCargandoHistorial(false);
+    }
+  };
+
+  const eliminarDiaHistorial = async (dia) => {
+    const confirmado = window.confirm(
+      `¿Eliminar el día ${formatearFecha(dia.fecha)}?\n\n` +
+        `Se eliminarán ${dia.total_servicios} servicios y todas sus asignaciones de trabajadores. ` +
+        "No se eliminarán casas ni trabajadores.",
+    );
+
+    if (!confirmado) {
+      return;
+    }
+
+    setEliminandoDiaId(dia.id);
+    setError("");
+
+    try {
+      const respuesta = await fetch(
+        `${API_BASE}/horarios/historial/${dia.id}`,
+        { method: "DELETE" },
+      );
+      const datos = await respuesta.json();
+
+      if (!respuesta.ok || !datos.ok) {
+        throw new Error(datos.error || "Error eliminando el día");
+      }
+
+      if (diaHistorial?.id === dia.id) {
+        setDiaHistorial(null);
+        setServiciosHistorial([]);
+      }
+
+      setRecargaResumen((valor) => valor + 1);
+      await cargarHistorial();
+    } catch (error) {
+      console.error(error);
+      setError(error.message);
+    } finally {
+      setEliminandoDiaId(null);
     }
   };
 
@@ -966,6 +1133,7 @@ function HorariosView() {
     setResultado(null);
     setError("");
     setEditandoIndex(null);
+    setServicioManual(crearServicioManualVacio());
     setPestanaHorario("analizar");
   };
 
@@ -986,6 +1154,7 @@ function HorariosView() {
     setCasaManualIndex(null);
     setNombreCasaManual("");
     setErrorCasaManual("");
+    setServicioManual(crearServicioManualVacio());
     setError("");
     setPestanaHorario("analizar");
 
@@ -1009,6 +1178,7 @@ function HorariosView() {
     setError("");
     setResultado(null);
     setEditandoIndex(null);
+    setServicioManual(crearServicioManualVacio());
 
     try {
       const formData = new FormData();
@@ -1084,6 +1254,117 @@ function HorariosView() {
   };
 
   // =========================================
+  // FILA MANUAL DE LA REVISIÓN
+  // =========================================
+
+  const actualizarServicioManual = (campo, valor) => {
+    setServicioManual((actual) => {
+      if (campo === "casa") {
+        const casaSeleccionada = casasActivas.find(
+          (casa) => casa.id === Number(valor),
+        );
+
+        if (!casaSeleccionada) {
+          return {
+            ...actual,
+            casa: { nombre: "", encontrada: false, datos: null },
+          };
+        }
+
+        return {
+          ...actual,
+          casa: {
+            nombre: casaSeleccionada.nombre,
+            encontrada: true,
+            datos: casaSeleccionada,
+          },
+        };
+      }
+
+      return {
+        ...actual,
+        [campo]: valor,
+      };
+    });
+  };
+
+  const actualizarTrabajadorManual = (trabajadorIndex, codigo) => {
+    setServicioManual((actual) => {
+      const trabajadorEncontrado = trabajadoresActivos.find(
+        (item) => item.codigo === codigo,
+      );
+
+      if (!trabajadorEncontrado) {
+        return actual;
+      }
+
+      const trabajadores = [...actual.trabajadores];
+
+      trabajadores[trabajadorIndex] = {
+        encontrado: true,
+        trabajador: trabajadorEncontrado,
+      };
+
+      return { ...actual, trabajadores };
+    });
+  };
+
+  const añadirTrabajadorManual = () => {
+    setServicioManual((actual) => ({
+      ...actual,
+      trabajadores: [
+        ...actual.trabajadores,
+        { encontrado: false, codigo: "" },
+      ],
+    }));
+  };
+
+  const eliminarTrabajadorManual = (trabajadorIndex) => {
+    setServicioManual((actual) => ({
+      ...actual,
+      trabajadores: actual.trabajadores.filter(
+        (_, index) => index !== trabajadorIndex,
+      ),
+    }));
+  };
+
+  const agregarServicioManual = () => {
+    if (!servicioManualTieneDatos(servicioManual)) {
+      setError(
+        "Selecciona una casa, un horario y al menos un trabajador para añadir el servicio.",
+      );
+      return;
+    }
+
+    if (!servicioManualCompleto(servicioManual)) {
+      setError(
+        "Completa la casa, las horas y los trabajadores antes de añadir el servicio.",
+      );
+      return;
+    }
+
+    setResultado((actual) => {
+      if (!actual) {
+        return actual;
+      }
+
+      return {
+        ...actual,
+        servicios: [
+          ...actual.servicios,
+          {
+            ...servicioManual,
+            manual: true,
+          },
+        ],
+      };
+    });
+
+    setServicioManual(crearServicioManualVacio());
+    setError("");
+  };
+
+  // =========================================
   // CREAR CASA DESDE LA REVISIÓN
   // =========================================
 
@@ -1140,29 +1421,40 @@ function HorariosView() {
       throw new Error("No se pudo crear la casa.");
     }
 
-    setResultado((actual) => {
-      const servicioActual = actual?.servicios[servicioIndex];
-
-      if (!servicioActual) {
-        return actual;
-      }
-
-      const serviciosActualizados = [...actual.servicios];
-
-      serviciosActualizados[servicioIndex] = {
-        ...servicioActual,
+    if (servicioIndex === "manual") {
+      setServicioManual((actual) => ({
+        ...actual,
         casa: {
           nombre: casa.nombre,
           encontrada: true,
           datos: casa,
         },
-      };
+      }));
+    } else {
+      setResultado((actual) => {
+        const servicioActual = actual?.servicios[servicioIndex];
 
-      return {
-        ...actual,
-        servicios: serviciosActualizados,
-      };
-    });
+        if (!servicioActual) {
+          return actual;
+        }
+
+        const serviciosActualizados = [...actual.servicios];
+
+        serviciosActualizados[servicioIndex] = {
+          ...servicioActual,
+          casa: {
+            nombre: casa.nombre,
+            encontrada: true,
+            datos: casa,
+          },
+        };
+
+        return {
+          ...actual,
+          servicios: serviciosActualizados,
+        };
+      });
+    }
 
     // Refrescamos el catálogo para que la casa aparezca en los desplegables.
     setCasas((actual) =>
@@ -1174,7 +1466,10 @@ function HorariosView() {
 
   // Alta manual: el usuario escribe o corrige el nombre de la casa.
   const abrirCasaManual = (servicioIndex) => {
-    const servicio = resultado?.servicios[servicioIndex];
+    const servicio =
+      servicioIndex === "manual"
+        ? servicioManual
+        : resultado?.servicios[servicioIndex];
 
     setCasaManualIndex(servicioIndex);
     setNombreCasaManual(String(servicio?.casa?.nombre || "").trim());
@@ -1395,12 +1690,27 @@ function HorariosView() {
   // =========================================
 
   const guardarHorario = async () => {
-    if (!resultado || !resultado.servicios.length) {
+    const serviciosRevision = [...(resultado?.servicios || [])];
+
+    // Si la fila manual tiene datos, se guarda junto al resto aunque no se
+    // haya pulsado "Añadir servicio".
+    if (servicioManualTieneDatos(servicioManual)) {
+      if (!servicioManualCompleto(servicioManual)) {
+        setError(
+          "Completa la fila manual (casa, horas y trabajadores) o límpiala antes de guardar.",
+        );
+        return;
+      }
+
+      serviciosRevision.push(servicioManual);
+    }
+
+    if (!resultado || serviciosRevision.length === 0) {
       setError("No hay servicios para guardar.");
       return;
     }
 
-    const errores = resultado.servicios.filter(servicioTieneErrores);
+    const errores = serviciosRevision.filter(servicioTieneErrores);
 
     if (errores.length > 0) {
       setError(`Hay ${errores.length} servicios pendientes de revisar.`);
@@ -1416,7 +1726,7 @@ function HorariosView() {
     setError("");
 
     try {
-      const serviciosParaGuardar = resultado.servicios.map((servicio) => ({
+      const serviciosParaGuardar = serviciosRevision.map((servicio) => ({
         casa_id: servicio.casa.datos.id,
         casa: servicio.casa.nombre,
         hora_inicio: servicio.hora_inicio,
@@ -1448,6 +1758,9 @@ function HorariosView() {
         `Horario guardado correctamente.\n\n` +
           `Servicios guardados: ${datos.servicios_guardados}`,
       );
+
+      setServicioManual(crearServicioManualVacio());
+      setRecargaResumen((valor) => valor + 1);
       await cargarHistorial();
     } catch (error) {
       console.error(error);
@@ -1883,7 +2196,14 @@ function HorariosView() {
                           >
                             <div className="item-casa-datos">
                               <div className="item-casa-titulo">
-                                <strong>{casa.nombre}</strong>
+                                <button
+                                  type="button"
+                                  className="btn-link btn-nombre-casa"
+                                  onClick={() => abrirPerfilCasa(casa)}
+                                  title="Ver horas trabajadas en esta casa"
+                                >
+                                  {casa.nombre}
+                                </button>
 
                                 {!activa && (
                                   <span className="badge badge-inactiva">
@@ -1944,6 +2264,14 @@ function HorariosView() {
                             </div>
 
                             <div className="item-acciones">
+                              <button
+                                type="button"
+                                className="btn-mini"
+                                onClick={() => abrirPerfilCasa(casa)}
+                              >
+                                Perfil
+                              </button>
+
                               <button
                                 type="button"
                                 className="btn-mini"
@@ -2428,18 +2756,34 @@ function HorariosView() {
               <div className="historial-layout">
                 <div className="historial-lista">
                   {historial.map((dia) => (
-                    <button
-                      type="button"
+                    <div
                       className={`historial-dia ${
                         diaHistorial?.id === dia.id ? "seleccionado" : ""
                       }`}
                       key={dia.id}
-                      onClick={() => abrirDiaHistorial(dia.id)}
                     >
-                      <strong>{formatearFecha(dia.fecha)}</strong>
-                      <span>{dia.total_servicios} servicios</span>
-                      <span>{dia.estado}</span>
-                    </button>
+                      <button
+                        type="button"
+                        className="historial-dia-seleccion"
+                        onClick={() => abrirDiaHistorial(dia.id)}
+                      >
+                        <strong>{formatearFecha(dia.fecha)}</strong>
+                        <span>{dia.total_servicios} servicios</span>
+                        <span>{dia.estado}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        className="btn-eliminar-dia"
+                        onClick={() => eliminarDiaHistorial(dia)}
+                        disabled={eliminandoDiaId === dia.id}
+                        title={`Eliminar el día ${formatearFecha(dia.fecha)}`}
+                      >
+                        {eliminandoDiaId === dia.id
+                          ? "Eliminando..."
+                          : "Eliminar"}
+                      </button>
+                    </div>
                   ))}
                 </div>
 
@@ -2643,7 +2987,7 @@ function HorariosView() {
 
                 <div className="resumen-servicios">
                   <span className="dato-chip">
-                    {resultado.servicios.length} servicios detectados
+                    {resultado.servicios.length} servicios en la revisión
                   </span>
 
                   <span
@@ -2688,7 +3032,8 @@ function HorariosView() {
                   onClick={guardarHorario}
                   disabled={
                     guardando ||
-                    resultado.servicios.length === 0 ||
+                    (resultado.servicios.length === 0 &&
+                      !servicioManualTieneDatos(servicioManual)) ||
                     contarErrores() > 0
                   }
                 >
@@ -3067,11 +3412,162 @@ function HorariosView() {
                   {resultado.servicios.length === 0 && (
                     <tr>
                       <td colSpan={5} className="tabla-servicios-vacia">
-                        No quedan servicios en la lista. Puedes analizar otra
-                        imagen o volver a revisar el horario.
+                        No hay servicios detectados. Añade una casa
+                        manualmente en la última fila.
                       </td>
                     </tr>
                   )}
+
+                  <tr className="fila-edicion fila-manual">
+                    <td>
+                      <label htmlFor="casa-manual">Añadir casa</label>
+
+                      <select
+                        id="casa-manual"
+                        value={servicioManual.casa.datos?.id || ""}
+                        onChange={(event) =>
+                          actualizarServicioManual(
+                            "casa",
+                            event.target.value,
+                          )
+                        }
+                      >
+                        <option value="">Selecciona una casa...</option>
+
+                        {casasActivas.map((casa) => (
+                          <option key={casa.id} value={casa.id}>
+                            {casa.nombre}
+                          </option>
+                        ))}
+                      </select>
+
+                      <div className="acciones-casa">
+                        <button
+                          type="button"
+                          className="btn-anadir-casa btn-casa-manual"
+                          onClick={() => abrirCasaManual("manual")}
+                        >
+                          Escribir nombre
+                        </button>
+                      </div>
+
+                      <span className="manual-fecha">
+                        Se guardará en la fecha seleccionada:{" "}
+                        {formatearFecha(fecha)}
+                      </span>
+                    </td>
+
+                    <td>
+                      <label htmlFor="inicio-manual">Inicio</label>
+
+                      <input
+                        id="inicio-manual"
+                        type="time"
+                        value={servicioManual.hora_inicio}
+                        onChange={(event) =>
+                          actualizarServicioManual(
+                            "hora_inicio",
+                            event.target.value,
+                          )
+                        }
+                      />
+                    </td>
+
+                    <td>
+                      <label htmlFor="fin-manual">Fin</label>
+
+                      <input
+                        id="fin-manual"
+                        type="time"
+                        value={servicioManual.hora_fin}
+                        onChange={(event) =>
+                          actualizarServicioManual(
+                            "hora_fin",
+                            event.target.value,
+                          )
+                        }
+                      />
+                    </td>
+
+                    <td>
+                      <label>Trabajadores</label>
+
+                      <div className="trabajadores-edicion">
+                        {servicioManual.trabajadores.map(
+                          (trabajador, trabajadorIndex) => (
+                            <div
+                              className="trabajador-edicion"
+                              key={trabajadorIndex}
+                            >
+                              <select
+                                aria-label={`Trabajador ${
+                                  trabajadorIndex + 1
+                                } del servicio manual`}
+                                value={
+                                  trabajador.encontrado &&
+                                  trabajador.trabajador
+                                    ? trabajador.trabajador.codigo
+                                    : ""
+                                }
+                                onChange={(event) =>
+                                  actualizarTrabajadorManual(
+                                    trabajadorIndex,
+                                    event.target.value,
+                                  )
+                                }
+                              >
+                                {!trabajador.encontrado && (
+                                  <option value="">Sin seleccionar</option>
+                                )}
+
+                                {trabajadoresActivos.map((item) => (
+                                  <option key={item.id} value={item.codigo}>
+                                    {item.codigo}
+                                    {" - "}
+                                    {item.nombre}
+                                  </option>
+                                ))}
+                              </select>
+
+                              <button
+                                type="button"
+                                className="btn-x"
+                                aria-label={`Quitar trabajador ${
+                                  trabajadorIndex + 1
+                                } del servicio manual`}
+                                onClick={() =>
+                                  eliminarTrabajadorManual(trabajadorIndex)
+                                }
+                              >
+                                ×
+                              </button>
+                            </div>
+                          ),
+                        )}
+                      </div>
+
+                      <button
+                        type="button"
+                        className="btn-anadir"
+                        onClick={añadirTrabajadorManual}
+                      >
+                        + Trabajador
+                      </button>
+                    </td>
+
+                    <td className="col-acciones">
+                      <div className="acciones-servicio">
+                        <button
+                          type="button"
+                          className="btn-guardar-edicion"
+                          onClick={agregarServicioManual}
+                          disabled={!servicioManualTieneDatos(servicioManual)}
+                        >
+                          Añadir servicio
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
                 </tbody>
               </table>
             </div>
@@ -3326,6 +3822,190 @@ function HorariosView() {
                             </td>
                             <td>
                               {servicio.otros_trabajadores
+                                .map((trabajador) => trabajador.codigo)
+                                .join(", ") || "-"}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            ) : null}
+          </div>
+        </div>
+      )}
+      {casaPerfil && (
+        <div
+          className="modal-overlay"
+          role="presentation"
+          onClick={cerrarPerfilCasa}
+        >
+          <div
+            className="modal-perfil"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="perfil-casa-titulo"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="modal-perfil-cabecera">
+              <div>
+                <h3 id="perfil-casa-titulo">{casaPerfil.nombre}</h3>
+
+                <p>
+                  {[casaPerfil.direccion, casaPerfil.poblacion]
+                    .filter(Boolean)
+                    .join(" · ") || "Sin dirección registrada"}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                className="btn-cerrar-modal"
+                aria-label="Cerrar perfil"
+                onClick={cerrarPerfilCasa}
+              >
+                ×
+              </button>
+            </div>
+
+            <div
+              className="perfil-periodos"
+              role="tablist"
+              aria-label="Periodo del perfil de la casa"
+            >
+              {["dia", "semana", "mes"].map((periodo) => (
+                <button
+                  key={periodo}
+                  type="button"
+                  role="tab"
+                  aria-selected={periodoPerfilCasa === periodo}
+                  className={`perfil-periodo ${
+                    periodoPerfilCasa === periodo
+                      ? "perfil-periodo-activo"
+                      : ""
+                  }`}
+                  onClick={() => setPeriodoPerfilCasa(periodo)}
+                >
+                  {ETIQUETAS_PERIODO[periodo]}
+                </button>
+              ))}
+            </div>
+
+            <div className="perfil-controles">
+              {periodoPerfilCasa === "mes" ? (
+                <>
+                  <label htmlFor="mes-perfil-casa">Mes</label>
+                  <input
+                    id="mes-perfil-casa"
+                    type="month"
+                    value={mesPerfilCasa}
+                    onChange={(event) => setMesPerfilCasa(event.target.value)}
+                  />
+                </>
+              ) : (
+                <>
+                  <label htmlFor="fecha-perfil-casa">Fecha</label>
+                  <input
+                    id="fecha-perfil-casa"
+                    type="date"
+                    value={fechaPerfilCasa}
+                    onChange={(event) =>
+                      setFechaPerfilCasa(event.target.value)
+                    }
+                  />
+                </>
+              )}
+
+              {periodoPerfilCasa === "semana" && (
+                <span className="perfil-rango">
+                  {formatearFecha(rangoPerfilCasaActual.desde)} –{" "}
+                  {formatearFecha(rangoPerfilCasaActual.hasta)}
+                </span>
+              )}
+            </div>
+
+            {errorPerfilCasa && <div className="error">{errorPerfilCasa}</div>}
+
+            {cargandoPerfilCasa ? (
+              <p className="gestion-vacio">Cargando perfil...</p>
+            ) : perfilCasa ? (
+              <>
+                <div className="datos-referencia perfil-resumen">
+                  <div className="dato-box">
+                    <span>
+                      {ETIQUETAS_HORAS_PERIODO[periodoPerfilCasa]}
+                    </span>
+                    <strong>
+                      {formatearMinutosTrabajados(perfilCasa.total_minutos)}
+                    </strong>
+                  </div>
+
+                  <div className="dato-box">
+                    <span>Servicios</span>
+                    <strong>{perfilCasa.total_servicios}</strong>
+                  </div>
+
+                  <div className="dato-box">
+                    <span>Trabajadores distintos</span>
+                    <strong>{perfilCasa.trabajadores_distintos}</strong>
+                  </div>
+
+                  <div className="dato-box">
+                    <span>Horas históricas</span>
+                    <strong>
+                      {formatearMinutosTrabajados(
+                        perfilCasa.total_minutos_historico,
+                      )}
+                    </strong>
+                  </div>
+                </div>
+
+                <p className="perfil-nota">
+                  Las horas se calculan con los horarios reales guardados, no
+                  con la duración de referencia de la casa (
+                  {formatearMinutosTrabajados(
+                    perfilCasa.casa?.duracion_minutos || 0,
+                  )}{" "}
+                  por servicio).
+                </p>
+
+                <div className="tabla-responsive">
+                  <table className="tabla-datos tabla-perfil">
+                    <thead>
+                      <tr>
+                        <th>Fecha</th>
+                        <th>Horario</th>
+                        <th>Duración</th>
+                        <th>Trabajadores</th>
+                      </tr>
+                    </thead>
+
+                    <tbody>
+                      {perfilCasa.servicios.length === 0 ? (
+                        <tr>
+                          <td colSpan={4} className="tabla-servicios-vacia">
+                            Sin servicios en este periodo.
+                          </td>
+                        </tr>
+                      ) : (
+                        perfilCasa.servicios.map((servicio) => (
+                          <tr key={servicio.id}>
+                            <td className="celda-fecha">
+                              {formatearFecha(servicio.fecha)}
+                            </td>
+                            <td className="celda-horario">
+                              {formatearHora(servicio.hora_inicio)} →{" "}
+                              {formatearHora(servicio.hora_fin)}
+                            </td>
+                            <td>
+                              {formatearMinutosTrabajados(
+                                servicio.duracion_minutos,
+                              )}
+                            </td>
+                            <td>
+                              {servicio.trabajadores
                                 .map((trabajador) => trabajador.codigo)
                                 .join(", ") || "-"}
                             </td>

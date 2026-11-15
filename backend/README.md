@@ -316,6 +316,7 @@ Base: `http://localhost:3000/api`
 | `POST` | `/horarios/guardar-completo` | Guarda un día completo de forma transaccional. |
 | `GET` | `/horarios/historial` | Lista los días con número de servicios. |
 | `GET` | `/horarios/historial/:diaId` | Detalle de un día. |
+| `DELETE` | `/horarios/historial/:diaId` | Elimina el día completo (cascada a `horarios` y `horario_trabajadores`); `409` si alguna visita está en una factura. |
 | `PATCH` | `/horarios/:id/duracion-facturable` | Ajusta la duración facturable de una visita. |
 | `POST` | `/horarios/guardar` | Guardado heredado de un único servicio. |
 | `GET/POST` | `/horarios/casas` | CRUD heredado de casas (sin uso desde la UI). |
@@ -402,6 +403,7 @@ Comportamiento:
 | `DELETE` | `/casas/:id` | Elimina si no tiene horarios ni facturas; si los tiene, `409`. |
 | `GET` | `/casas/resumen-facturacion?mes=&anio=` | Resumen facturable por casa. |
 | `GET` | `/casas/:id/visitas?mes=&anio=` | Visitas de una casa en un periodo. |
+| `GET` | `/casas/:id/perfil?desde=&hasta=&mes=&anio=` | Horas reales, servicios y trabajadores de una casa por periodo, más total histórico. |
 
 Campos aceptados: `nombre` (obligatorio, único), `nombre_cliente`, `apellidos_cliente`, `direccion`, `contacto`, `codigo_postal`, `poblacion`, `tipo`, `frecuencia_texto`, `visitas_por_periodo`, `periodo_dias`, `precio_hora`, `emite_factura`, `observaciones`, `duracion_minutos`, `activo`.
 

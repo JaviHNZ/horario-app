@@ -1202,14 +1202,11 @@ select {
 .historial-dia {
   display: grid;
   grid-template-columns: 1fr auto;
-  gap: 5px 10px;
-  width: 100%;
-  padding: 11px 12px;
+  align-items: stretch;
+  gap: 6px;
   border: 1px solid #e5e7eb;
   border-radius: 7px;
   background: white;
-  text-align: left;
-  cursor: pointer;
 }
 
 .historial-dia:hover,
@@ -1218,13 +1215,49 @@ select {
   background: #eff6ff;
 }
 
-.historial-dia strong {
+.historial-dia-seleccion {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 5px 10px;
+  padding: 11px 12px;
+  border: 0;
+  border-radius: 7px 0 0 7px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.historial-dia-seleccion strong {
   font-size: 14px;
 }
 
-.historial-dia span {
+.historial-dia-seleccion span {
   color: #6b7280;
   font-size: 12px;
+}
+
+.btn-eliminar-dia {
+  align-self: center;
+  margin-right: 8px;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn-eliminar-dia:hover:not(:disabled) {
+  background: #fee2e2;
+}
+
+.btn-eliminar-dia:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .historial-detalle {
@@ -2143,6 +2176,22 @@ select {
   text-decoration: underline;
 }
 
+.btn-nombre-casa {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: inherit;
+  font-weight: 700;
+  color: #111827;
+  text-align: left;
+  cursor: pointer;
+}
+
+.btn-nombre-casa:hover {
+  color: #2563eb;
+  text-decoration: underline;
+}
+
 .acciones-servicio {
   display: flex;
   flex-wrap: wrap;
@@ -2239,6 +2288,34 @@ select {
 
 .btn-anadir-casa.btn-casa-manual:hover:not(:disabled) {
   background: #ede9fe;
+}
+
+/* =========================================
+   FILA MANUAL SIEMPRE VISIBLE EN LA REVISIÓN
+   ========================================= */
+
+.tabla-servicios tbody tr.fila-manual {
+  border-top: 2px dashed #c7d2fe;
+  background: #f5f7ff;
+}
+
+.fila-manual td:first-child {
+  border-left: 3px solid #6366f1;
+}
+
+.manual-fecha {
+  display: block;
+  margin-top: 6px;
+  color: #4b5563;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.perfil-nota {
+  margin: 10px 0 0;
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .btn-volver-imagen {
