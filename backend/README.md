@@ -30,10 +30,14 @@ API REST en Node.js/Express que da soporte al gestor de horarios: recibe imágen
 | `multer` | Subida de imágenes a `uploads/`. |
 | `@google/genai` | Análisis de imágenes con Gemini. |
 | `pdfkit` | Generación de PDF de facturas (aplazado). |
+| `exceljs` | Generación y verificación de los Excel de copias. |
+| `archiver` | Creación del ZIP completo. |
+| `jszip` | Lectura y verificación del ZIP y extracción del SQL. |
 | `cors` | CORS abierto. |
 | `dotenv` | Carga de `.env`. |
-| `exceljs` (dev) | Lectura de Excel en scripts de importación. |
 | `nodemon` (dev) | Recarga en desarrollo. |
+
+> Las copias SQL usan los binarios `mysqldump` y `mysql` del sistema; deben estar instalados en el servidor.
 
 ---
 
@@ -50,16 +54,20 @@ backend/
 │   │   ├── casas.js           # Listas auxiliares
 │   │   └── trabajadores.js
 │   ├── router/
-│   │   ├── horarios.routes.js # Análisis, validación, guardado e historial
+│   │   ├── horarios.routes.js # Análisis, validación, guardado, historial y edición
 │   │   ├── casas.routes.js    # CRUD de casas
 │   │   ├── trabajadores.routes.js # CRUD y resúmenes
+│   │   ├── backups.routes.js  # Copias de seguridad y exportaciones
 │   │   └── facturas.routes.js # Facturación (aplazada)
 │   └── services/
-│       └── gemini.service.js  # Prompt y llamada a Gemini
+│       ├── gemini.service.js  # Prompt y llamada a Gemini
+│       └── backup.service.js  # Excel, SQL, ZIP, verificación, restauración, programador y Drive
 ├── scripts/
 │   ├── migrar-esquema-casas.js
+│   ├── migrar-observaciones-horarios.js
 │   ├── importar-datos-reales.js
-│   └── 03-importar-inicial.js
+│   ├── 03-importar-inicial.js
+│   └── backup-automatico.js
 └── README.md
 ```
 
@@ -87,6 +95,10 @@ GOOGLE_API_KEY=tu_api_key
 | `DB_PORT` | Sí | Puerto. |
 | `GOOGLE_API_KEY` | Sí para `/analizar` | API key de Gemini. |
 | `PORT` | No | Puerto HTTP; por defecto `3000`. |
+| `GOOGLE_DRIVE_CLIENT_ID` | No | Client ID OAuth 2.0 para subir copias a Drive. |
+| `GOOGLE_DRIVE_CLIENT_SECRET` | No | Client Secret OAuth 2.0. |
+| `GOOGLE_DRIVE_REDIRECT_URI` | No | Callback OAuth; por defecto `http://localhost:3000/api/backups/google-drive/callback`. |
+| `FRONTEND_URL` | No | URL del frontend para redirigir tras autorizar Drive; por defecto `http://localhost:5175`. |
 
 > `server.js` ejecuta `require("dotenv").config()`, por lo que el `.env` debe estar en el directorio desde el que se arranca el proceso.
 
@@ -130,8 +142,10 @@ Todos se ejecutan desde `backend/` y por defecto funcionan en **modo simulación
 | Script | Descripción |
 | --- | --- |
 | `node scripts/migrar-esquema-casas.js` | Añade columnas del esquema real. Idempotente: omite las que ya existen. |
+| `node scripts/migrar-observaciones-horarios.js` | Añade `horarios.observaciones` (`VARCHAR(1000) NULL`). Idempotente. |
 | `node scripts/importar-datos-reales.js` | Lee los Excel de `datos_reales/` y genera artefactos de revisión en `datos_reales/_salida/`. No toca MySQL. |
 | `node scripts/03-importar-inicial.js` | Importación inicial transaccional: sustituye los datos ficticios por los reales. |
+| `node scripts/backup-automatico.js` | Ejecuta una copia automática desde cron/systemd respetando `backups/config.json`. |
 
 `npm test` es un placeholder sin pruebas reales.
 
@@ -207,6 +221,7 @@ CREATE TABLE `horarios` (
   `fecha_creacion` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `duracion_facturable_minutos` smallint unsigned DEFAULT NULL
     COMMENT 'Duración facturable excepcional de esta visita, en minutos. NULL = usar duración habitual de la casa',
+  `observaciones` varchar(1000) DEFAULT NULL,
   PRIMARY KEY (`id`),
   KEY `idx_horarios_dia` (`dia_id`),
   KEY `idx_horarios_casa` (`casa_id`),
@@ -290,7 +305,7 @@ dias 1 ──── N horarios   (ON DELETE CASCADE)
 
 ### Notas
 
-- No hay archivos de migración versionados en el repositorio; el esquema debe crearse manualmente.
+- No hay archivos de migración completos en el repositorio; el esquema debe crearse manualmente. La migración aditiva `scripts/migrar-observaciones-horarios.js` añade `horarios.observaciones` y puede ejecutarse varias veces sin efecto.
 - `dateStrings: true` en el pool evita desfases de zona horaria en `DATE` y `TIME`.
 - `dias.fecha` es única: solo puede existir un registro por fecha.
 
@@ -315,7 +330,8 @@ Base: `http://localhost:3000/api`
 | `POST` | `/horarios/validar` | Valida un array de servicios sin guardar. |
 | `POST` | `/horarios/guardar-completo` | Guarda un día completo de forma transaccional. |
 | `GET` | `/horarios/historial` | Lista los días con número de servicios. |
-| `GET` | `/horarios/historial/:diaId` | Detalle de un día. |
+| `GET` | `/horarios/historial/:diaId` | Detalle de un día, con `observaciones` y `duracion_facturable_minutos` por servicio. |
+| `PUT` | `/horarios/historial/:diaId` | Edita un día completo de forma transaccional. |
 | `DELETE` | `/horarios/historial/:diaId` | Elimina el día completo (cascada a `horarios` y `horario_trabajadores`); `409` si alguna visita está en una factura. |
 | `PATCH` | `/horarios/:id/duracion-facturable` | Ajusta la duración facturable de una visita. |
 | `POST` | `/horarios/guardar` | Guardado heredado de un único servicio. |
@@ -392,6 +408,69 @@ Comportamiento:
 - Antes de reemplazar, comprueba que ninguna visita del día esté incluida en una factura; si es así devuelve `409`.
 - Todo ocurre en una transacción.
 
+#### `PUT /horarios/historial/:diaId`
+
+Cuerpo:
+
+```json
+{
+  "fecha": "2026-12-02",
+  "servicios": [
+    {
+      "id": 173,
+      "fecha": "2026-12-02",
+      "casa_id": 47,
+      "hora_inicio": "08:00",
+      "hora_fin": "10:00",
+      "trabajadores": [3],
+      "observaciones": "Cambio de hora"
+    },
+    {
+      "fecha": "2026-12-02",
+      "casa_id": 46,
+      "hora_inicio": "14:00",
+      "hora_fin": "15:30",
+      "trabajadores": [2]
+    }
+  ]
+}
+```
+
+Comportamiento:
+
+- Valida fecha, casa, horas y al menos un trabajador por servicio.
+- Los servicios con `id` existente se actualizan en su sitio: **conservan el `id`** y no se duplican.
+- Los servicios sin `id` se insertan; los que ya no vienen se eliminan.
+- Cada servicio puede llevar su propia `fecha`; si no, usa la fecha del día.
+- Si todo el día cambia a una fecha libre, se actualiza el mismo registro de `dias` (se conservan `id`, archivo y fecha de creación). Si la fecha ya existe, los servicios se fusionan en ese día.
+- Las asignaciones de trabajadores se sustituyen por las enviadas.
+- Bloquea con `409` si alguna visita del día está incluida en una factura.
+- Todo ocurre en una transacción con `FOR UPDATE`.
+
+### Copias de seguridad
+
+| Método | Ruta | Descripción |
+| --- | --- | --- |
+| `GET` | `/backups` | Historial de copias (`backups/index.json`). |
+| `GET/PUT` | `/backups/configuracion` | Lee o guarda la configuración de copias automáticas. |
+| `POST` | `/backups/exportar/clientes-casas` | Genera y descarga `clientes_casas.xlsx` (3 hojas). |
+| `POST` | `/backups/exportar/trabajadores` | Genera y descarga `trabajadores.xlsx` (3 hojas). |
+| `POST` | `/backups/exportar/servicios` | Genera y descarga `servicios_historial.xlsx` (4 hojas). |
+| `POST` | `/backups/exportar/sql` | Genera y descarga `base_datos_completa.sql`. |
+| `POST` | `/backups/exportar/completo` | Genera y descarga el ZIP completo. |
+| `POST` | `/backups/automatico/ejecutar` | Ejecuta una copia automática ahora (requiere estar activa). |
+| `GET` | `/backups/:nombre/descargar` | Descarga una copia almacenada. |
+| `POST` | `/backups/:nombre/verificar` | Reabre y verifica una copia almacenada. |
+| `POST` | `/backups/:nombre/probar-restauracion` | Restaura en una base temporal aislada y la elimina. |
+| `POST` | `/backups/restaurar` | Restaura una copia real; requiere `{ nombre, confirmacion: "RESTAURAR" }`. |
+| `GET` | `/backups/google-drive/estado` | Estado de configuración/conexión. |
+| `GET` | `/backups/google-drive/autorizar` | Devuelve la URL de autorización OAuth 2.0. |
+| `GET` | `/backups/google-drive/callback` | Callback OAuth; redirige al frontend. |
+| `POST` | `/backups/google-drive/subir` | Sube una copia a `Claudia Neteja/FECHA`. |
+| `POST` | `/backups/google-drive/desconectar` | Borra los tokens locales. |
+
+Las descargas de exportación incluyen la cabecera `X-Verificacion` con el resultado resumido de las comprobaciones.
+
 ### Casas
 
 | Método | Ruta | Descripción |
@@ -465,6 +544,78 @@ La API devuelve además `campos_faltantes` en las casas para que la interfaz pue
 `guardar-completo` reemplaza el contenido del día. Si alguna visita del día ya pertenece a una factura (en cualquier estado), se bloquea con `409` para no romper la facturación.
 
 ---
+
+## Copias de seguridad
+
+El servicio `src/services/backup.service.js` concentra toda la lógica.
+
+### Consistencia
+
+- Los tres Excel se leen dentro de `START TRANSACTION WITH CONSISTENT SNAPSHOT`, de modo que todos reflejan la misma foto lógica.
+- El SQL se genera con `mysqldump --single-transaction --skip-lock-tables`, sin bloquear la aplicación y sin incluir secretos.
+- El ZIP se construye con esos mismos Excel y el SQL generado en la misma operación.
+
+### Archivos generados
+
+| Archivo | Contenido |
+| --- | --- |
+| `clientes_casas.xlsx` | Clientes/casas, actividad por servicio y resumen mensual por casa. |
+| `trabajadores.xlsx` | Datos, historial de trabajo y resumen de horas por trabajador. |
+| `servicios_historial.xlsx` | Todos los servicios y resúmenes mensual, por casa y por trabajador. |
+| `base_datos_completa.sql` | Estructura y datos de MySQL (`mysqldump`). |
+| `README.txt` | Fecha, versión, contenido, recuentos, motor/versión e instrucciones de restauración. |
+
+Los Excel incluyen IDs originales, horas reales y totales; los nombres de hoja son estables para que la verificación pueda comprobarlos.
+
+### Verificación
+
+- **Excel**: se reabren con ExcelJS y se comprueban hojas, número de filas, conjuntos de IDs y totales de minutos.
+- **SQL**: tamaño, `CREATE TABLE`, `INSERT INTO`, presencia de todas las tablas, datos en tablas con registros y ausencia de secretos.
+- **ZIP**: tamaño y existencia/no vacuidad de los cinco archivos.
+- **Restauración de prueba**: crea `horarios_app_verif_<timestamp>`, importa el SQL, compara recuentos con los esperados y elimina la base temporal.
+
+### Historial y configuración
+
+- `backups/index.json`: metadatos de cada copia (nombre, tipo, fecha, tamaño, estado, verificación, archivos, resumen y datos de Drive).
+- `backups/config.json`: activación, frecuencia, hora, día de semana, retención y carpeta de destino.
+- `backups/google-drive-tokens.json`: tokens OAuth con permisos `600`. Nunca se envían al frontend.
+- La retención solo afecta a copias de tipo `automatica`; `0` conserva todas.
+
+### Copias automáticas
+
+- `server.js` arranca un programador con `setInterval` que revisa cada minuto y ejecuta la copia cuando vence el periodo configurado.
+- No depende del navegador, pero sí de que el proceso del backend esté vivo.
+- Para independizarlo, usar cron o systemd:
+
+```cron
+0 2 * * * cd /ruta/al/backend && /usr/bin/node scripts/backup-automatico.js >> backups/cron.log 2>&1
+```
+
+El script respeta la misma configuración y evita duplicados si la copia del periodo ya existe.
+
+### Restauración
+
+- La restauración real exige `confirmacion: "RESTAURAR"`.
+- Antes de restaurar se intenta crear una copia SQL de seguridad del estado actual.
+- Acepta un `.sql` o un `.zip` que contenga `base_datos_completa.sql`.
+- Tras importar, comprueba que la base responde y devuelve los recuentos.
+- No se ejecuta ninguna restauración automáticamente.
+
+### Google Drive
+
+1. Crear credenciales OAuth 2.0 en Google Cloud y añadir el redirect URI.
+2. Definir `GOOGLE_DRIVE_CLIENT_ID`, `GOOGLE_DRIVE_CLIENT_SECRET` y, si hace falta, `GOOGLE_DRIVE_REDIRECT_URI` y `FRONTEND_URL`.
+3. Reiniciar el backend y pulsar **Conectar Google Drive** en la interfaz.
+4. Las copias se suben a `Claudia Neteja/<AAAA-MM-DD>/`; si el archivo ya existe en esa carpeta no se duplica.
+
+Sin credenciales, la API responde `503` con un mensaje claro y la interfaz mantiene disponible la descarga manual.
+
+### Reglas de horas
+
+- Duración del servicio = `hora_inicio` → `hora_fin`.
+- Horas individuales = duración × trabajadores asignados.
+- `casas.duracion_minutos` es solo referencia y nunca sustituye las horas reales.
+- Las exportaciones no duplican servicios: cada fila de servicio cuenta una vez; las horas individuales se reparten por trabajador.
 
 ## Integración con Gemini
 

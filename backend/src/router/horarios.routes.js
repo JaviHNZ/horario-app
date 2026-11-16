@@ -455,6 +455,16 @@ router.post("/guardar-completo", async (req, res) => {
           error: `No hay trabajadores en "${servicio.casa}"`,
         });
       }
+
+      if (
+        servicio.observaciones &&
+        String(servicio.observaciones).length > 1000
+      ) {
+        return res.status(400).json({
+          ok: false,
+          error: `Las observaciones de "${servicio.casa}" superan los 1000 caracteres`,
+        });
+      }
     }
 
     // ----------------------------------------
@@ -558,11 +568,18 @@ router.post("/guardar-completo", async (req, res) => {
                         dia_id,
                         casa_id,
                         hora_inicio,
-                        hora_fin
+                        hora_fin,
+                        observaciones
                     )
-                    VALUES (?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?)
                     `,
-        [diaId, servicio.casa_id, servicio.hora_inicio, servicio.hora_fin],
+        [
+          diaId,
+          servicio.casa_id,
+          servicio.hora_inicio,
+          servicio.hora_fin,
+          servicio.observaciones || null,
+        ],
       );
 
       const horarioId = resultadoHorario.insertId;
@@ -689,6 +706,8 @@ router.get("/historial/:diaId", async (req, res) => {
         h.id,
         h.hora_inicio,
         h.hora_fin,
+        h.observaciones,
+        h.duracion_facturable_minutos,
         c.id AS casa_id,
         c.nombre AS casa,
         c.direccion,
@@ -713,6 +732,8 @@ router.get("/historial/:diaId", async (req, res) => {
         h.id,
         h.hora_inicio,
         h.hora_fin,
+        h.observaciones,
+        h.duracion_facturable_minutos,
         c.id,
         c.nombre,
         c.direccion,
@@ -826,6 +847,371 @@ router.delete("/historial/:diaId", async (req, res) => {
     res.status(500).json({
       ok: false,
       error: "Error eliminando el día del historial",
+    });
+  } finally {
+    connection.release();
+  }
+});
+
+// PUT /api/horarios/historial/:diaId
+// Edita un día completo de forma transaccional. Los servicios con `id`
+// existente se actualizan en su sitio (se conserva el id y no se duplican);
+// los servicios sin id se insertan y los que ya no vienen se eliminan.
+// Cada servicio puede llevar su propia `fecha` para moverlo a otro día.
+router.put("/historial/:diaId", async (req, res) => {
+  const connection = await pool.getConnection();
+
+  try {
+    const { diaId } = req.params;
+    const { fecha, servicios } = req.body;
+
+    if (!fecha) {
+      return res.status(400).json({
+        ok: false,
+        error: "La fecha es obligatoria",
+      });
+    }
+
+    if (!Array.isArray(servicios) || servicios.length === 0) {
+      return res.status(400).json({
+        ok: false,
+        error: "No hay servicios para guardar",
+      });
+    }
+
+    for (const servicio of servicios) {
+      if (!servicio.casa_id) {
+        return res.status(400).json({
+          ok: false,
+          error: `La casa de "${servicio.casa || "un servicio"}" no está seleccionada`,
+        });
+      }
+
+      if (!servicio.hora_inicio || !servicio.hora_fin) {
+        return res.status(400).json({
+          ok: false,
+          error: `Falta la hora de "${servicio.casa || "un servicio"}"`,
+        });
+      }
+
+      if (
+        !Array.isArray(servicio.trabajadores) ||
+        servicio.trabajadores.length === 0
+      ) {
+        return res.status(400).json({
+          ok: false,
+          error: `No hay trabajadores en "${servicio.casa || "un servicio"}"`,
+        });
+      }
+
+      if (
+        servicio.observaciones &&
+        String(servicio.observaciones).length > 1000
+      ) {
+        return res.status(400).json({
+          ok: false,
+          error: "Las observaciones de un servicio superan los 1000 caracteres",
+        });
+      }
+    }
+
+    await connection.beginTransaction();
+
+    const [diasOrigen] = await connection.query(
+      `
+      SELECT id, fecha
+      FROM dias
+      WHERE id = ?
+      FOR UPDATE
+      `,
+      [diaId],
+    );
+
+    if (diasOrigen.length === 0) {
+      await connection.rollback();
+
+      return res.status(404).json({
+        ok: false,
+        error: "Día no encontrado",
+      });
+    }
+
+    const [horariosOriginales] = await connection.query(
+      `
+      SELECT id
+      FROM horarios
+      WHERE dia_id = ?
+      FOR UPDATE
+      `,
+      [diaId],
+    );
+
+    const idsOriginales = new Set(
+      horariosOriginales.map((horario) => Number(horario.id)),
+    );
+
+    // Si alguna visita está facturada no se puede editar: el detalle de la
+    // factura guarda una copia de fecha, horas e importe.
+    const [facturados] = await connection.query(
+      `
+      SELECT DISTINCT f.id
+      FROM factura_detalles fd
+      INNER JOIN facturas f ON f.id = fd.factura_id
+      INNER JOIN horarios h ON h.id = fd.horario_id
+      WHERE h.dia_id = ?
+      `,
+      [diaId],
+    );
+
+    if (facturados.length > 0) {
+      await connection.rollback();
+
+      return res.status(409).json({
+        ok: false,
+        error:
+          "No se puede editar este día: algunas visitas están incluidas en una factura. Anula la factura antes de modificarlo.",
+      });
+    }
+
+    // ----------------------------------------
+    // DÍAS DESTINO (la fecha del día o la de cada servicio)
+    // ----------------------------------------
+
+    const fechasDestino = [
+      ...new Set(servicios.map((servicio) => servicio.fecha || fecha)),
+    ];
+
+    const diasPorFecha = new Map();
+    const fechaOrigen = String(diasOrigen[0].fecha).slice(0, 10);
+    const fechaUnica = fechasDestino.length === 1 ? fechasDestino[0] : null;
+
+    if (fechaUnica && fechaUnica !== fechaOrigen) {
+      const [otroDia] = await connection.query(
+        `
+        SELECT id
+        FROM dias
+        WHERE fecha = ?
+        FOR UPDATE
+        `,
+        [fechaUnica],
+      );
+
+      if (otroDia.length === 0) {
+        // Cambio de fecha del día completo: se conserva el mismo registro
+        // de `dias` (id, archivo original y fecha de creación).
+        await connection.query(
+          `
+          UPDATE dias
+          SET fecha = ?
+          WHERE id = ?
+          `,
+          [fechaUnica, diaId],
+        );
+
+        diasPorFecha.set(fechaUnica, Number(diaId));
+      } else {
+        // Ya existe un día con esa fecha: se fusionan los servicios.
+        diasPorFecha.set(fechaUnica, Number(otroDia[0].id));
+      }
+    } else {
+      for (const fechaDestino of fechasDestino) {
+        const [existentes] = await connection.query(
+          `
+          SELECT id
+          FROM dias
+          WHERE fecha = ?
+          FOR UPDATE
+          `,
+          [fechaDestino],
+        );
+
+        if (existentes.length > 0) {
+          diasPorFecha.set(fechaDestino, Number(existentes[0].id));
+        } else {
+          const [insertado] = await connection.query(
+            `
+            INSERT INTO dias (fecha, estado)
+            VALUES (?, 'confirmado')
+            `,
+            [fechaDestino],
+          );
+
+          diasPorFecha.set(fechaDestino, insertado.insertId);
+        }
+      }
+    }
+
+    const idsConservados = new Set();
+
+    for (const servicio of servicios) {
+      const fechaServicio = servicio.fecha || fecha;
+      const destinoDiaId = diasPorFecha.get(fechaServicio);
+      const esOriginal =
+        servicio.id && idsOriginales.has(Number(servicio.id));
+
+      let horarioId;
+
+      if (esOriginal) {
+        horarioId = Number(servicio.id);
+        idsConservados.add(horarioId);
+
+        await connection.query(
+          `
+          UPDATE horarios
+          SET
+            dia_id = ?,
+            casa_id = ?,
+            hora_inicio = ?,
+            hora_fin = ?,
+            observaciones = ?
+          WHERE id = ?
+          `,
+          [
+            destinoDiaId,
+            servicio.casa_id,
+            servicio.hora_inicio,
+            servicio.hora_fin,
+            servicio.observaciones || null,
+            horarioId,
+          ],
+        );
+
+        await connection.query(
+          `
+          DELETE FROM horario_trabajadores
+          WHERE horario_id = ?
+          `,
+          [horarioId],
+        );
+      } else {
+        const [insertado] = await connection.query(
+          `
+          INSERT INTO horarios
+          (
+            dia_id,
+            casa_id,
+            hora_inicio,
+            hora_fin,
+            observaciones
+          )
+          VALUES (?, ?, ?, ?, ?)
+          `,
+          [
+            destinoDiaId,
+            servicio.casa_id,
+            servicio.hora_inicio,
+            servicio.hora_fin,
+            servicio.observaciones || null,
+          ],
+        );
+
+        horarioId = insertado.insertId;
+        idsConservados.add(horarioId);
+      }
+
+      const trabajadores = [
+        ...new Set(
+          servicio.trabajadores
+            .map((trabajadorId) => Number(trabajadorId))
+            .filter(Boolean),
+        ),
+      ];
+
+      for (const trabajadorId of trabajadores) {
+        await connection.query(
+          `
+          INSERT INTO horario_trabajadores
+          (
+            horario_id,
+            trabajador_id
+          )
+          VALUES (?, ?)
+          `,
+          [horarioId, trabajadorId],
+        );
+      }
+    }
+
+    // Servicios del día original que ya no vienen en la edición.
+    const idsEliminados = [...idsOriginales].filter(
+      (id) => !idsConservados.has(id),
+    );
+
+    if (idsEliminados.length > 0) {
+      await connection.query(
+        `
+        DELETE FROM horarios
+        WHERE id IN (?)
+        `,
+        [idsEliminados],
+      );
+    }
+
+    // Si el día original se ha quedado vacío y no es destino, se elimina.
+    const origenSigueSiendoDestino = fechasDestino.some(
+      (fechaDestino) => diasPorFecha.get(fechaDestino) === Number(diaId),
+    );
+
+    let diaOrigenEliminado = false;
+
+    if (!origenSigueSiendoDestino) {
+      const [restantes] = await connection.query(
+        `
+        SELECT COUNT(*) AS total
+        FROM horarios
+        WHERE dia_id = ?
+        `,
+        [diaId],
+      );
+
+      if (Number(restantes[0].total) === 0) {
+        await connection.query(
+          `
+          DELETE FROM dias
+          WHERE id = ?
+          `,
+          [diaId],
+        );
+
+        diaOrigenEliminado = true;
+      }
+    }
+
+    await connection.commit();
+
+    res.json({
+      ok: true,
+      mensaje: "Día actualizado correctamente",
+      dia_id: Number(diaId),
+      dia_origen_eliminado: diaOrigenEliminado,
+      fechas: fechasDestino,
+      servicios_guardados: servicios.length,
+      servicios_eliminados: idsEliminados.length,
+    });
+  } catch (error) {
+    await connection.rollback();
+
+    console.error("Error editando día del historial:", error);
+
+    if (error.code === "ER_NO_REFERENCED_ROW_2") {
+      return res.status(400).json({
+        ok: false,
+        error:
+          "La casa o alguno de los trabajadores ya no existe. Recarga los datos y vuelve a intentarlo.",
+      });
+    }
+
+    if (error.code === "ER_DUP_ENTRY") {
+      return res.status(409).json({
+        ok: false,
+        error:
+          "Ya existe otro día con esa fecha. Vuelve a cargar el historial para verlo.",
+      });
+    }
+
+    res.status(500).json({
+      ok: false,
+      error: "Error editando el día del historial",
     });
   } finally {
     connection.release();

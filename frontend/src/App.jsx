@@ -10,6 +10,7 @@ import {
 import TrabajadoresView from "./TrabajadoresView";
 import FacturasView from "./FacturasView";
 import FacturaDetalleView from "./FacturaDetalleView";
+import BackupView from "./BackupView";
 import "./App.css";
 
 const API_BASE = "http://localhost:3000/api";
@@ -244,6 +245,49 @@ const formatearHora = (hora) => {
   return String(hora).slice(0, 5);
 };
 
+// Minutos reales entre dos horas (admite servicios que cruzan medianoche).
+const minutosEntreHoras = (inicio, fin) => {
+  if (!inicio || !fin) {
+    return 0;
+  }
+
+  const [h1, m1] = String(inicio).slice(0, 5).split(":").map(Number);
+  const [h2, m2] = String(fin).slice(0, 5).split(":").map(Number);
+
+  let minutos = h2 * 60 + m2 - (h1 * 60 + m1);
+
+  if (minutos < 0) {
+    minutos += 1440;
+  }
+
+  return Math.max(0, minutos);
+};
+
+// Suma minutos a una hora HH:MM y devuelve HH:MM (con vuelta de día).
+const sumarMinutosAHora = (hora, minutos) => {
+  if (!hora) {
+    return "";
+  }
+
+  const [h, m] = String(hora).slice(0, 5).split(":").map(Number);
+  const total = ((h * 60 + m + Number(minutos)) % 1440 + 1440) % 1440;
+
+  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(
+    total % 60,
+  ).padStart(2, "0")}`;
+};
+
+// Duración en horas decimales para el input del editor (1.5 = 1 h 30 min).
+const minutosAHorasDecimal = (minutos) => {
+  const total = Number(minutos);
+
+  if (!Number.isFinite(total) || total <= 0) {
+    return "";
+  }
+
+  return String(Math.round((total / 60) * 100) / 100);
+};
+
 // Fila vacía que siempre aparece al final de la revisión para añadir una casa
 // que la IA no haya detectado.
 const crearServicioManualVacio = () => ({
@@ -380,6 +424,16 @@ function HorariosView() {
   const [cargandoHistorial, setCargandoHistorial] = useState(false);
   const [eliminandoDiaId, setEliminandoDiaId] = useState(null);
   const [recargaResumen, setRecargaResumen] = useState(0);
+
+  // Edición completa de un día del historial.
+  const [editandoDiaHistorial, setEditandoDiaHistorial] = useState(null);
+  const [fechaEdicionHistorial, setFechaEdicionHistorial] = useState("");
+  const [serviciosEdicionHistorial, setServiciosEdicionHistorial] = useState(
+    [],
+  );
+  const [guardandoDiaHistorial, setGuardandoDiaHistorial] = useState(false);
+  const [errorEdicionHistorial, setErrorEdicionHistorial] = useState("");
+  const [mensajeEdicionHistorial, setMensajeEdicionHistorial] = useState("");
 
   const casasActivas = useMemo(
     () => casas.filter((casa) => normalizarActivo(casa.activo)),
@@ -812,6 +866,355 @@ function HorariosView() {
       setError(error.message);
     } finally {
       setEliminandoDiaId(null);
+    }
+  };
+
+  // =========================================
+  // EDITAR UN DÍA DEL HISTORIAL
+  // =========================================
+
+  // Convierte la respuesta de la API al estado editable del formulario.
+  const servicioHistorialAEdicion = (servicio, fechaDia) => ({
+    id: servicio.id,
+    fecha: String(servicio.fecha || fechaDia || "").slice(0, 10),
+    casa_id: servicio.casa_id ? String(servicio.casa_id) : "",
+    hora_inicio: formatearHora(servicio.hora_inicio),
+    hora_fin: formatearHora(servicio.hora_fin),
+    trabajadores: (servicio.trabajadores || []).map((trabajador) =>
+      String(trabajador.id),
+    ),
+    observaciones: servicio.observaciones || "",
+  });
+
+  const abrirEditorDiaHistorial = async (dia) => {
+    try {
+      setCargandoHistorial(true);
+      setError("");
+      setErrorEdicionHistorial("");
+      setMensajeEdicionHistorial("");
+
+      const respuesta = await fetch(
+        `${API_BASE}/horarios/historial/${dia.id}`,
+      );
+      const datos = await respuesta.json();
+
+      if (!respuesta.ok || !datos.ok) {
+        throw new Error(datos.error || "Error cargando el día del historial");
+      }
+
+      const fechaDia = String(datos.dia.fecha).slice(0, 10);
+
+      setDiaHistorial(datos.dia);
+      setServiciosHistorial(datos.servicios || []);
+      setEditandoDiaHistorial(datos.dia);
+      setFechaEdicionHistorial(fechaDia);
+      setServiciosEdicionHistorial(
+        (datos.servicios || []).map((servicio) =>
+          servicioHistorialAEdicion(servicio, fechaDia),
+        ),
+      );
+    } catch (error) {
+      console.error(error);
+      setError(error.message);
+    } finally {
+      setCargandoHistorial(false);
+    }
+  };
+
+  const cerrarEditorDiaHistorial = () => {
+    if (guardandoDiaHistorial) {
+      return;
+    }
+
+    setEditandoDiaHistorial(null);
+    setServiciosEdicionHistorial([]);
+    setErrorEdicionHistorial("");
+  };
+
+  const actualizarServicioEdicionHistorial = (index, cambios) => {
+    setServiciosEdicionHistorial((actuales) =>
+      actuales.map((servicio, posicion) =>
+        posicion === index ? { ...servicio, ...cambios } : servicio,
+      ),
+    );
+  };
+
+  // Cambiar la hora de inicio conserva la duración y recalcula el fin.
+  const cambiarHoraInicioEdicionHistorial = (index, valor) => {
+    setServiciosEdicionHistorial((actuales) =>
+      actuales.map((servicio, posicion) => {
+        if (posicion !== index) {
+          return servicio;
+        }
+
+        const minutos = minutosEntreHoras(
+          servicio.hora_inicio,
+          servicio.hora_fin,
+        );
+
+        return {
+          ...servicio,
+          hora_inicio: valor,
+          hora_fin:
+            valor && minutos > 0
+              ? sumarMinutosAHora(valor, minutos)
+              : servicio.hora_fin,
+        };
+      }),
+    );
+  };
+
+  const cambiarHoraFinEdicionHistorial = (index, valor) => {
+    actualizarServicioEdicionHistorial(index, { hora_fin: valor });
+  };
+
+  // La duración se expresa en horas decimales y recalcula la hora de fin.
+  const cambiarDuracionEdicionHistorial = (index, valor) => {
+    const horas = Number(String(valor).replace(",", "."));
+
+    if (!Number.isFinite(horas) || horas <= 0) {
+      return;
+    }
+
+    setServiciosEdicionHistorial((actuales) =>
+      actuales.map((servicio, posicion) => {
+        if (posicion !== index || !servicio.hora_inicio) {
+          return servicio;
+        }
+
+        return {
+          ...servicio,
+          hora_fin: sumarMinutosAHora(
+            servicio.hora_inicio,
+            Math.round(horas * 60),
+          ),
+        };
+      }),
+    );
+  };
+
+  const añadirServicioEdicionHistorial = () => {
+    setServiciosEdicionHistorial((actuales) => [
+      ...actuales,
+      {
+        id: null,
+        fecha: fechaEdicionHistorial,
+        casa_id: "",
+        hora_inicio: "",
+        hora_fin: "",
+        trabajadores: [""],
+        observaciones: "",
+      },
+    ]);
+  };
+
+  const eliminarServicioEdicionHistorial = (index) => {
+    setServiciosEdicionHistorial((actuales) =>
+      actuales.filter((servicio, posicion) => posicion !== index),
+    );
+  };
+
+  const añadirTrabajadorEdicionHistorial = (index) => {
+    setServiciosEdicionHistorial((actuales) =>
+      actuales.map((servicio, posicion) =>
+        posicion === index
+          ? { ...servicio, trabajadores: [...servicio.trabajadores, ""] }
+          : servicio,
+      ),
+    );
+  };
+
+  const cambiarTrabajadorEdicionHistorial = (
+    index,
+    trabajadorIndex,
+    valor,
+  ) => {
+    setServiciosEdicionHistorial((actuales) =>
+      actuales.map((servicio, posicion) => {
+        if (posicion !== index) {
+          return servicio;
+        }
+
+        return {
+          ...servicio,
+          trabajadores: servicio.trabajadores.map((trabajador, posicionT) =>
+            posicionT === trabajadorIndex ? valor : trabajador,
+          ),
+        };
+      }),
+    );
+  };
+
+  const eliminarTrabajadorEdicionHistorial = (index, trabajadorIndex) => {
+    setServiciosEdicionHistorial((actuales) =>
+      actuales.map((servicio, posicion) =>
+        posicion === index
+          ? {
+              ...servicio,
+              trabajadores: servicio.trabajadores.filter(
+                (_, posicionT) => posicionT !== trabajadorIndex,
+              ),
+            }
+          : servicio,
+      ),
+    );
+  };
+
+  const cambiarFechaEdicionHistorial = (index, valor) => {
+    if (index === null) {
+      // Cambiar la fecha del día mueve todos los servicios que seguían
+      // usando la fecha original; los que ya tenían fecha propia se respetan.
+      setServiciosEdicionHistorial((actuales) =>
+        actuales.map((servicio) => ({
+          ...servicio,
+          fecha:
+            !servicio.fecha || servicio.fecha === fechaEdicionHistorial
+              ? valor
+              : servicio.fecha,
+        })),
+      );
+      setFechaEdicionHistorial(valor);
+      return;
+    }
+
+    actualizarServicioEdicionHistorial(index, { fecha: valor });
+  };
+
+  // Totales en vivo del editor (horas de servicio y horas individuales).
+  const totalesEdicionHistorial = useMemo(() => {
+    let minutosServicio = 0;
+    let minutosIndividuales = 0;
+
+    for (const servicio of serviciosEdicionHistorial) {
+      const minutos = minutosEntreHoras(
+        servicio.hora_inicio,
+        servicio.hora_fin,
+      );
+      const trabajadores = servicio.trabajadores.filter(Boolean).length;
+
+      minutosServicio += minutos;
+      minutosIndividuales += minutos * trabajadores;
+    }
+
+    return {
+      minutosServicio,
+      minutosIndividuales,
+      horasServicio: minutosAHorasDecimal(minutosServicio),
+      horasIndividuales: minutosAHorasDecimal(minutosIndividuales),
+    };
+  }, [serviciosEdicionHistorial]);
+
+  const guardarDiaEditado = async () => {
+    if (guardandoDiaHistorial) {
+      return;
+    }
+
+    setErrorEdicionHistorial("");
+    setMensajeEdicionHistorial("");
+
+    if (!fechaEdicionHistorial) {
+      setErrorEdicionHistorial("Indica la fecha del día.");
+      return;
+    }
+
+    if (serviciosEdicionHistorial.length === 0) {
+      setErrorEdicionHistorial(
+        "Añade al menos un servicio o elimina el día desde el historial.",
+      );
+      return;
+    }
+
+    for (let index = 0; index < serviciosEdicionHistorial.length; index += 1) {
+      const servicio = serviciosEdicionHistorial[index];
+
+      if (!servicio.casa_id) {
+        setErrorEdicionHistorial(
+          `Selecciona la casa del servicio ${index + 1}.`,
+        );
+        return;
+      }
+
+      if (!servicio.hora_inicio || !servicio.hora_fin) {
+        setErrorEdicionHistorial(
+          `Indica la hora de inicio y de fin del servicio ${index + 1}.`,
+        );
+        return;
+      }
+
+      if (!servicio.fecha) {
+        setErrorEdicionHistorial(
+          `Indica la fecha del servicio ${index + 1}.`,
+        );
+        return;
+      }
+
+      const trabajadores = servicio.trabajadores.filter(Boolean);
+
+      if (trabajadores.length === 0) {
+        setErrorEdicionHistorial(
+          `Asigna al menos un trabajador al servicio ${index + 1}.`,
+        );
+        return;
+      }
+
+      if (new Set(trabajadores).size !== trabajadores.length) {
+        setErrorEdicionHistorial(
+          `El servicio ${index + 1} tiene un trabajador repetido.`,
+        );
+        return;
+      }
+    }
+
+    setGuardandoDiaHistorial(true);
+
+    try {
+      const respuesta = await fetch(
+        `${API_BASE}/horarios/historial/${editandoDiaHistorial.id}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fecha: fechaEdicionHistorial,
+            servicios: serviciosEdicionHistorial.map((servicio) => ({
+              id: servicio.id || undefined,
+              fecha: servicio.fecha || fechaEdicionHistorial,
+              casa_id: Number(servicio.casa_id),
+              hora_inicio: servicio.hora_inicio,
+              hora_fin: servicio.hora_fin,
+              trabajadores: servicio.trabajadores
+                .filter(Boolean)
+                .map(Number),
+              observaciones: servicio.observaciones.trim() || null,
+            })),
+          }),
+        },
+      );
+
+      const datos = await respuesta.json();
+
+      if (!respuesta.ok || !datos.ok) {
+        throw new Error(datos.error || "Error guardando el día");
+      }
+
+      setMensajeEdicionHistorial(
+        "Día actualizado correctamente. Totales recalculados.",
+      );
+      setEditandoDiaHistorial(null);
+      setServiciosEdicionHistorial([]);
+      setRecargaResumen((valor) => valor + 1);
+      await cargarHistorial();
+
+      if (!datos.dia_origen_eliminado) {
+        await abrirDiaHistorial(datos.dia_id);
+      } else {
+        setDiaHistorial(null);
+        setServiciosHistorial([]);
+      }
+    } catch (error) {
+      console.error(error);
+      setErrorEdicionHistorial(error.message);
+    } finally {
+      setGuardandoDiaHistorial(false);
     }
   };
 
@@ -2733,9 +3136,21 @@ function HorariosView() {
               <div>
                 <h2>Historial</h2>
 
-                <p>Consulta los horarios guardados sin modificarlos.</p>
+                <p>Consulta y corrige los horarios guardados.</p>
               </div>
             </div>
+
+            {mensajeEdicionHistorial && (
+              <div className="mensaje-exito" role="status">
+                {mensajeEdicionHistorial}
+              </div>
+            )}
+
+            {errorEdicionHistorial && (
+              <div className="error" role="alert">
+                {errorEdicionHistorial}
+              </div>
+            )}
 
             {cargandoHistorial && historial.length === 0 ? (
               <p className="gestion-vacio">Cargando historial...</p>
@@ -2774,6 +3189,19 @@ function HorariosView() {
 
                       <button
                         type="button"
+                        className="btn-editar-dia"
+                        onClick={() => abrirEditorDiaHistorial(dia)}
+                        disabled={
+                          eliminandoDiaId === dia.id ||
+                          Boolean(editandoDiaHistorial)
+                        }
+                        title={`Editar el día ${formatearFecha(dia.fecha)}`}
+                      >
+                        Editar
+                      </button>
+
+                      <button
+                        type="button"
                         className="btn-eliminar-dia"
                         onClick={() => eliminarDiaHistorial(dia)}
                         disabled={eliminandoDiaId === dia.id}
@@ -2788,14 +3216,376 @@ function HorariosView() {
                 </div>
 
               <div className="historial-detalle">
-                {!diaHistorial ? (
+                {editandoDiaHistorial ? (
+                  <div className="editor-dia">
+                    <div className="editor-dia-cabecera">
+                      <div>
+                        <h3>Editar día</h3>
+
+                        <label
+                          className="editor-dia-fecha"
+                          htmlFor="fecha-dia-editor"
+                        >
+                          Fecha del día
+                          <input
+                            id="fecha-dia-editor"
+                            type="date"
+                            value={fechaEdicionHistorial}
+                            onChange={(event) =>
+                              cambiarFechaEdicionHistorial(
+                                null,
+                                event.target.value,
+                              )
+                            }
+                          />
+                        </label>
+                      </div>
+
+                      <span>{serviciosEdicionHistorial.length} servicios</span>
+                    </div>
+
+                    <div className="tabla-scroll">
+                      <table className="tabla-servicios tabla-editor-dia">
+                        <thead>
+                          <tr>
+                            <th scope="col">Fecha</th>
+                            <th scope="col">Casa / Cliente</th>
+                            <th scope="col">Inicio</th>
+                            <th scope="col">Fin</th>
+                            <th scope="col">Duración (h)</th>
+                            <th scope="col">Trabajadores</th>
+                            <th scope="col">Observaciones</th>
+                            <th scope="col" className="col-acciones">
+                              Acciones
+                            </th>
+                          </tr>
+                        </thead>
+
+                        <tbody>
+                          {serviciosEdicionHistorial.map(
+                            (servicio, index) => {
+                              const minutos = minutosEntreHoras(
+                                servicio.hora_inicio,
+                                servicio.hora_fin,
+                              );
+
+                              return (
+                                <tr
+                                  className="fila-edicion"
+                                  key={servicio.id || `nuevo-${index}`}
+                                >
+                                  <td>
+                                    <label
+                                      htmlFor={`fecha-servicio-${index}`}
+                                    >
+                                      Fecha
+                                    </label>
+
+                                    <input
+                                      id={`fecha-servicio-${index}`}
+                                      type="date"
+                                      value={servicio.fecha}
+                                      onChange={(event) =>
+                                        cambiarFechaEdicionHistorial(
+                                          index,
+                                          event.target.value,
+                                        )
+                                      }
+                                    />
+                                  </td>
+
+                                  <td>
+                                    <label htmlFor={`casa-editor-${index}`}>
+                                      Casa
+                                    </label>
+
+                                    <select
+                                      id={`casa-editor-${index}`}
+                                      value={servicio.casa_id}
+                                      onChange={(event) =>
+                                        actualizarServicioEdicionHistorial(
+                                          index,
+                                          { casa_id: event.target.value },
+                                        )
+                                      }
+                                    >
+                                      <option value="">
+                                        Selecciona una casa
+                                      </option>
+
+                                      {casasActivas.map((casa) => (
+                                        <option key={casa.id} value={casa.id}>
+                                          {casa.nombre}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </td>
+
+                                  <td>
+                                    <label
+                                      htmlFor={`inicio-editor-${index}`}
+                                    >
+                                      Inicio
+                                    </label>
+
+                                    <input
+                                      id={`inicio-editor-${index}`}
+                                      type="time"
+                                      value={servicio.hora_inicio}
+                                      onChange={(event) =>
+                                        cambiarHoraInicioEdicionHistorial(
+                                          index,
+                                          event.target.value,
+                                        )
+                                      }
+                                    />
+                                  </td>
+
+                                  <td>
+                                    <label htmlFor={`fin-editor-${index}`}>
+                                      Fin
+                                    </label>
+
+                                    <input
+                                      id={`fin-editor-${index}`}
+                                      type="time"
+                                      value={servicio.hora_fin}
+                                      onChange={(event) =>
+                                        cambiarHoraFinEdicionHistorial(
+                                          index,
+                                          event.target.value,
+                                        )
+                                      }
+                                    />
+                                  </td>
+
+                                  <td>
+                                    <label
+                                      htmlFor={`duracion-editor-${index}`}
+                                    >
+                                      Duración
+                                    </label>
+
+                                    <input
+                                      id={`duracion-editor-${index}`}
+                                      type="number"
+                                      min="0.25"
+                                      step="0.25"
+                                      value={minutosAHorasDecimal(minutos)}
+                                      onChange={(event) =>
+                                        cambiarDuracionEdicionHistorial(
+                                          index,
+                                          event.target.value,
+                                        )
+                                      }
+                                    />
+
+                                    <span className="editor-ayuda">
+                                      {minutos} min
+                                    </span>
+                                  </td>
+
+                                  <td>
+                                    <label>Trabajadores</label>
+
+                                    <div className="trabajadores-edicion">
+                                      {servicio.trabajadores.map(
+                                        (trabajadorId, trabajadorIndex) => (
+                                          <div
+                                            className="trabajador-edicion"
+                                            key={trabajadorIndex}
+                                          >
+                                            <select
+                                              aria-label={`Trabajador ${
+                                                trabajadorIndex + 1
+                                              } del servicio ${index + 1}`}
+                                              value={trabajadorId}
+                                              onChange={(event) =>
+                                                cambiarTrabajadorEdicionHistorial(
+                                                  index,
+                                                  trabajadorIndex,
+                                                  event.target.value,
+                                                )
+                                              }
+                                            >
+                                              <option value="">
+                                                Selecciona trabajador
+                                              </option>
+
+                                              {trabajadoresActivos.map(
+                                                (trabajador) => (
+                                                  <option
+                                                    key={trabajador.id}
+                                                    value={trabajador.id}
+                                                  >
+                                                    {trabajador.codigo} -{" "}
+                                                    {trabajador.nombre}
+                                                  </option>
+                                                ),
+                                              )}
+                                            </select>
+
+                                            <button
+                                              type="button"
+                                              className="btn-x"
+                                              aria-label={`Quitar trabajador ${
+                                                trabajadorIndex + 1
+                                              } del servicio ${index + 1}`}
+                                              onClick={() =>
+                                                eliminarTrabajadorEdicionHistorial(
+                                                  index,
+                                                  trabajadorIndex,
+                                                )
+                                              }
+                                            >
+                                              ×
+                                            </button>
+                                          </div>
+                                        ),
+                                      )}
+                                    </div>
+
+                                    <button
+                                      type="button"
+                                      className="btn-anadir"
+                                      onClick={() =>
+                                        añadirTrabajadorEdicionHistorial(index)
+                                      }
+                                    >
+                                      + Trabajador
+                                    </button>
+                                  </td>
+
+                                  <td>
+                                    <label
+                                      htmlFor={`observaciones-editor-${index}`}
+                                    >
+                                      Observaciones
+                                    </label>
+
+                                    <input
+                                      id={`observaciones-editor-${index}`}
+                                      type="text"
+                                      maxLength={1000}
+                                      value={servicio.observaciones}
+                                      onChange={(event) =>
+                                        actualizarServicioEdicionHistorial(
+                                          index,
+                                          {
+                                            observaciones: event.target.value,
+                                          },
+                                        )
+                                      }
+                                      placeholder="Opcional"
+                                    />
+                                  </td>
+
+                                  <td className="col-acciones">
+                                    <button
+                                      type="button"
+                                      className="btn-eliminar-servicio"
+                                      onClick={() =>
+                                        eliminarServicioEdicionHistorial(index)
+                                      }
+                                      disabled={
+                                        serviciosEdicionHistorial.length === 1
+                                      }
+                                      title={
+                                        serviciosEdicionHistorial.length === 1
+                                          ? "Un día debe tener al menos un servicio"
+                                          : "Eliminar este servicio"
+                                      }
+                                    >
+                                      Eliminar
+                                    </button>
+                                  </td>
+                                </tr>
+                              );
+                            },
+                          )}
+
+                          {serviciosEdicionHistorial.length === 0 && (
+                            <tr>
+                              <td
+                                colSpan={8}
+                                className="tabla-servicios-vacia"
+                              >
+                                No hay servicios. Añade uno para guardar el
+                                día.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div className="editor-dia-totales">
+                      <span>
+                        Horas de servicio:{" "}
+                        <strong>
+                          {totalesEdicionHistorial.horasServicio || 0} h
+                        </strong>
+                      </span>
+
+                      <span>
+                        Horas individuales:{" "}
+                        <strong>
+                          {totalesEdicionHistorial.horasIndividuales || 0} h
+                        </strong>
+                      </span>
+                    </div>
+
+                    <div className="editor-dia-acciones">
+                      <button
+                        type="button"
+                        className="btn-anadir"
+                        onClick={añadirServicioEdicionHistorial}
+                        disabled={guardandoDiaHistorial}
+                      >
+                        + Añadir servicio
+                      </button>
+
+                      <div className="editor-dia-botones">
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          onClick={cerrarEditorDiaHistorial}
+                          disabled={guardandoDiaHistorial}
+                        >
+                          Cancelar
+                        </button>
+
+                        <button
+                          type="button"
+                          className="btn-primary"
+                          onClick={guardarDiaEditado}
+                          disabled={guardandoDiaHistorial}
+                        >
+                          {guardandoDiaHistorial
+                            ? "Guardando..."
+                            : "Guardar cambios"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : !diaHistorial ? (
                   <p className="gestion-vacio">Selecciona un día.</p>
                 ) : (
                   <>
                     <div className="historial-detalle-header">
                       <h3>{formatearFecha(diaHistorial.fecha)}</h3>
 
-                      <span>{serviciosHistorial.length} servicios</span>
+                      <div className="historial-detalle-acciones">
+                        <span>{serviciosHistorial.length} servicios</span>
+
+                        <button
+                          type="button"
+                          className="btn-editar-dia"
+                          onClick={() => abrirEditorDiaHistorial(diaHistorial)}
+                        >
+                          Editar día
+                        </button>
+                      </div>
                     </div>
 
                     <div className="historial-servicios">
@@ -2808,6 +3598,12 @@ function HorariosView() {
                               {formatearHora(servicio.hora_inicio)} →{" "}
                               {formatearHora(servicio.hora_fin)}
                             </span>
+
+                            {servicio.observaciones && (
+                              <span className="historial-observaciones">
+                                {servicio.observaciones}
+                              </span>
+                            )}
                           </div>
 
                           <div className="trabajadores-celda">
@@ -4067,6 +4863,16 @@ function Layout() {
             >
               Historial
             </Link>
+            <Link
+              to="/copias"
+              className={
+                location.pathname.startsWith("/copias")
+                  ? "btn-primary"
+                  : "btn-secondary"
+              }
+            >
+              Copias de seguridad
+            </Link>
           </nav>
         </div>
       </header>
@@ -4086,6 +4892,7 @@ function App() {
         <Route path="/horarios" element={<HorariosView />} />
         <Route path="/gestion" element={<HorariosView />} />
         <Route path="/historial" element={<HorariosView />} />
+        <Route path="/copias" element={<BackupView />} />
         <Route path="/trabajadores" element={<TrabajadoresView />} />
         <Route path="/trabajadores/:id" element={<TrabajadoresView />} />
         <Route path="/facturas" element={<FacturasView />} />

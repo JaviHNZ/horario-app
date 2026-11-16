@@ -49,7 +49,8 @@ frontend/
 │   ├── index.css            # Estilos base
 │   ├── TrabajadoresView.jsx # Vista heredada de resumen/perfil
 │   ├── FacturasView.jsx     # Facturación (aplazada)
-│   └── FacturaDetalleView.jsx
+│   ├── FacturaDetalleView.jsx
+│   └── BackupView.jsx       # Copias de seguridad y exportaciones
 └── README.md
 ```
 
@@ -89,7 +90,8 @@ npm run dev
 | `/` | — | Redirige a `/horarios`. |
 | `/horarios` | `HorariosView` | Análisis y revisión de horarios. |
 | `/gestion` | `HorariosView` | Gestión de casas y trabajadores. |
-| `/historial` | `HorariosView` | Historial de días guardados. |
+| `/historial` | `HorariosView` | Historial de días guardados y edición. |
+| `/copias` | `BackupView` | Copias de seguridad, exportaciones y Google Drive. |
 | `/trabajadores` | `TrabajadoresView` | Vista heredada de resumen/perfil (fuera de la navegación). |
 | `/trabajadores/:id` | `TrabajadoresView` | Perfil de trabajador (heredada). |
 | `/facturas` | `FacturasView` | Facturación (aplazada, fuera de la navegación). |
@@ -103,9 +105,9 @@ npm run dev
 
 - **Claudia Netella** como marca.
 - Una etiqueta pequeña **Gestor de Horarios**.
-- Las pestañas **Horarios**, **Gestión** e **Historial**.
+- Las pestañas **Horarios**, **Gestión**, **Historial** y **Copias de seguridad**.
 
-Las tres rutas renderizan el mismo componente `HorariosView`, que decide qué sección mostrar según `location.pathname`. Así el estado del análisis no se pierde al cambiar de pestaña.
+Las tres primeras rutas renderizan el mismo componente `HorariosView`, que decide qué sección mostrar según `location.pathname`. Así el estado del análisis no se pierde al cambiar de pestaña. `BackupView` es independiente y se encarga de las exportaciones y las copias.
 
 ---
 
@@ -151,7 +153,21 @@ En ambas, el formulario aparece **encima** del listado.
 
 - Lista de días guardados con fecha, archivo, estado y número de servicios.
 - Selección de un día para ver su detalle y los trabajadores de cada servicio.
+- Botón **Editar** por día y **Editar día** en el detalle: abre un editor en tabla con fecha del día, fecha por servicio, casa, hora de inicio, hora de fin, duración en horas decimales, trabajadores, observaciones y acciones para añadir o eliminar servicios y trabajadores.
+- Al cambiar la hora de inicio se conserva la duración y se recalcula el fin; al cambiar la duración se recalcula el fin. Los totales de horas de servicio y horas individuales se muestran en vivo.
+- Al cambiar la fecha del día se mueven los servicios que seguían usando esa fecha; los que tienen fecha propia se respetan.
+- Botón **Guardar cambios** con validación (casa, horas, fecha y al menos un trabajador por servicio) y feedback de éxito/error. El guardado conserva los IDs y no duplica registros.
 - Botón **Eliminar** por día con confirmación que indica la fecha y el número de servicios; borra el día, sus servicios y asignaciones (nunca casas ni trabajadores) y refresca los totales.
+
+### `BackupView` — Copias de seguridad
+
+- Cinco exportaciones: clientes y casas, trabajadores, historial de servicios, SQL y **copia completa ZIP**.
+- Descarga con progreso real mediante `XMLHttpRequest` y bloqueo de botones mientras hay una exportación en curso para evitar duplicados.
+- Resultado de la verificación del servidor (cabecera `X-Verificacion`) con comprobaciones y errores.
+- Historial de copias con nombre, fecha, tipo, tamaño, estado, verificación y acciones: descargar, verificar, probar restauración en base temporal, restaurar y subir a Drive.
+- Formulario de copias automáticas: activación, frecuencia diaria/semanal, hora, día de la semana, retención y carpeta de destino adicional. Incluye **Ejecutar ahora**.
+- Estado de Google Drive: conectar/desconectar y subir copias cuando hay credenciales configuradas.
+- Modal de restauración con aviso de sobrescritura y confirmación escribiendo `RESTAURAR`; el botón permanece deshabilitado hasta que el texto coincide.
 
 ### Vistas heredadas
 
@@ -170,7 +186,7 @@ Todo el estado principal vive en `HorariosView`:
 | Catálogos | `casas`, `trabajadores`, `cargandoDatos` |
 | Gestión | `pestanaGestion`, `nuevaCasa`, `nuevoTrabajador`, `casaEditando`, `trabajadorEditando`, `busquedaCasa`, `busquedaTrabajador`, `soloPendientes` |
 | Perfiles | `trabajadorPerfil`, `periodoPerfil`, `fechaPerfil`, `mesPerfil`, `perfilTrabajador`; `casaPerfil`, `periodoPerfilCasa`, `fechaPerfilCasa`, `mesPerfilCasa`, `perfilCasa` |
-| Historial | `historial`, `diaHistorial`, `serviciosHistorial`, `cargandoHistorial`, `eliminandoDiaId` |
+| Historial | `historial`, `diaHistorial`, `serviciosHistorial`, `cargandoHistorial`, `eliminandoDiaId`; edición: `editandoDiaHistorial`, `fechaEdicionHistorial`, `serviciosEdicionHistorial`, `guardandoDiaHistorial`, `errorEdicionHistorial`, `mensajeEdicionHistorial` |
 
 Flujo típico:
 
@@ -192,7 +208,9 @@ Todas las llamadas usan `fetch` contra `API_BASE`.
 | Cargar catálogos | `GET /casas`, `GET /trabajadores` |
 | Analizar imagen | `POST /horarios/analizar` (multipart) |
 | Guardar día | `POST /horarios/guardar-completo` |
-| Historial | `GET /horarios/historial`, `GET /horarios/historial/:id`, `DELETE /horarios/historial/:id` |
+| Historial | `GET /horarios/historial`, `GET /horarios/historial/:id`, `PUT /horarios/historial/:id`, `DELETE /horarios/historial/:id` |
+| Copias | `GET /backups`, `GET/PUT /backups/configuracion`, `POST /backups/exportar/*`, `GET /backups/:nombre/descargar`, `POST /backups/:nombre/verificar`, `POST /backups/:nombre/probar-restauracion`, `POST /backups/restaurar`, `POST /backups/automatico/ejecutar` |
+| Google Drive | `GET /backups/google-drive/estado`, `GET /backups/google-drive/autorizar`, `POST /backups/google-drive/subir`, `POST /backups/google-drive/desconectar` |
 | Casas | `POST/PUT/PATCH/DELETE /casas`, `GET /casas/:id/perfil` |
 | Trabajadores | `POST/PUT/PATCH /trabajadores` |
 | Resumen/perfil | `GET /trabajadores/resumen-diario`, `GET /trabajadores/:id/perfil`, `GET /casas/:id/perfil` |
@@ -208,7 +226,7 @@ La interfaz normaliza `activo` y `datos_pendientes` porque MySQL los devuelve co
 - Cabecera blanca con borde inferior y acento azul.
 - Marca **Claudia Netella** + etiqueta **Gestor de Horarios**.
 - Navegación con pestañas; la activa en azul y las inactivas en gris.
-- Layout responsive: en pantallas estrechas la cabecera se apila y las pestañas pasan a una cuadrícula de tres columnas.
+- Layout responsive: en pantallas estrechas la cabecera se apila y las pestañas pasan a una cuadrícula de dos columnas.
 - Tablas con versión responsive y formularios en tarjetas.
 - Paleta basada en grises (`#111827`, `#6b7280`, `#e5e7eb`) y azul (`#2563eb`).
 
@@ -249,3 +267,5 @@ npm run build
 - Sin internacionalización: textos en español fijados en el código.
 - Sin paginación en listados largos (se filtra en cliente).
 - Sin tests de componentes ni end-to-end.
+- La conexión con Google Drive depende de que el backend tenga `GOOGLE_DRIVE_CLIENT_ID` y `GOOGLE_DRIVE_CLIENT_SECRET`; el frontend nunca maneja tokens.
+- Las exportaciones y restauraciones requieren el backend y los clientes `mysqldump`/`mysql` disponibles en el servidor.

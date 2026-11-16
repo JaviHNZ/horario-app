@@ -1201,7 +1201,7 @@ select {
 
 .historial-dia {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr auto auto;
   align-items: stretch;
   gap: 6px;
   border: 1px solid #e5e7eb;
@@ -1364,6 +1364,7 @@ select {
   align-items: center;
   text-decoration: none;
   font-size: 13px;
+  white-space: nowrap;
 }
 
 .app-nav a.btn-primary,
@@ -1766,7 +1767,7 @@ select {
 
   .app-nav {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 6px;
   }
 
@@ -2394,5 +2395,466 @@ select {
 
   .guardar-panel .btn-volver-imagen {
     width: 100%;
+  }
+}
+
+/* =========================================
+   EDICIÓN DEL HISTORIAL
+   ========================================= */
+
+.btn-editar-dia {
+  align-self: center;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn-editar-dia:hover:not(:disabled) {
+  background: #dbeafe;
+}
+
+.btn-editar-dia:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.mensaje-exito {
+  margin-top: 15px;
+  padding: 11px;
+  border-radius: 7px;
+  background: #dcfce7;
+  color: #166534;
+}
+
+.historial-detalle-acciones {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.historial-observaciones {
+  color: #6b7280;
+  font-size: 12px;
+  font-style: italic;
+}
+
+.editor-dia {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.editor-dia-cabecera {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.editor-dia-cabecera h3 {
+  margin: 0 0 8px;
+}
+
+.editor-dia-cabecera > span {
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.editor-dia-fecha {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: bold;
+  color: #374151;
+}
+
+.editor-dia-fecha input {
+  height: 32px;
+  padding: 4px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.tabla-editor-dia td {
+  vertical-align: top;
+}
+
+.tabla-editor-dia label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 11px;
+  font-weight: bold;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.tabla-editor-dia input,
+.tabla-editor-dia select {
+  width: 100%;
+  min-width: 90px;
+  height: 32px;
+  padding: 4px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: white;
+  font-size: 13px;
+}
+
+.tabla-editor-dia input[type="number"] {
+  min-width: 74px;
+}
+
+.editor-ayuda {
+  display: block;
+  margin-top: 4px;
+  color: #6b7280;
+  font-size: 11px;
+}
+
+.editor-dia-totales {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  padding: 10px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 7px;
+  background: white;
+  font-size: 13px;
+  color: #374151;
+}
+
+.editor-dia-acciones {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.editor-dia-botones {
+  display: flex;
+  gap: 8px;
+}
+
+/* =========================================
+   COPIAS DE SEGURIDAD
+   ========================================= */
+
+.copias {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.copias-bloque {
+  padding: 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f9fafb;
+}
+
+.copias-bloque h3 {
+  margin: 0 0 12px;
+  font-size: 16px;
+}
+
+.copias-bloque-cabecera {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.copias-bloque-cabecera h3 {
+  margin: 0;
+}
+
+.copias-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.copia-opcion {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: white;
+}
+
+.copia-opcion strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 14px;
+}
+
+.copia-opcion p {
+  margin: 0;
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.copia-opcion-destacada {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+
+.copia-opcion .btn-primary {
+  flex-shrink: 0;
+}
+
+.copia-progreso {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.copia-progreso-barra {
+  flex: 1;
+  height: 10px;
+  border-radius: 999px;
+  background: #e5e7eb;
+  overflow: hidden;
+}
+
+.copia-progreso-relleno {
+  height: 100%;
+  border-radius: 999px;
+  background: #2563eb;
+  transition: width 0.2s ease;
+}
+
+.copia-progreso span {
+  min-width: 42px;
+  text-align: right;
+  color: #374151;
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.copia-verificacion {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 14px;
+  padding: 11px 12px;
+  border-radius: 7px;
+  font-size: 12px;
+}
+
+.copia-verificacion-ok {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.copia-verificacion-error {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.copia-verificacion ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.copia-verificacion li {
+  margin-bottom: 3px;
+}
+
+.copia-verificacion-detalle {
+  margin-top: 12px;
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.tabla-copias td {
+  vertical-align: middle;
+}
+
+.celda-nombre-copia {
+  max-width: 260px;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.copia-estado {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: bold;
+  white-space: nowrap;
+}
+
+.copia-estado-completada {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.copia-estado-con_errores {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.copia-acciones {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 320px;
+}
+
+.copias-ayuda {
+  margin: 8px 0;
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.copias-ayuda code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #e5e7eb;
+  color: #111827;
+  font-size: 11px;
+}
+
+.copias-form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.copia-campo {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: bold;
+  color: #374151;
+}
+
+.copia-campo input,
+.copia-campo select {
+  height: 34px;
+  padding: 4px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: white;
+  font-size: 13px;
+}
+
+.copia-campo-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.copia-campo-check input {
+  width: 16px;
+  height: 16px;
+}
+
+.copia-campo-ancho {
+  grid-column: 1 / -1;
+}
+
+.copias-form-acciones {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  grid-column: 1 / -1;
+  margin-top: 4px;
+}
+
+.modal-restauracion {
+  max-width: 520px;
+}
+
+.modal-restauracion-aviso {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid #fecaca;
+  border-radius: 7px;
+  background: #fef2f2;
+  color: #7f1d1d;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.modal-restauracion-aviso p {
+  margin: 0;
+}
+
+.modal-restauracion-input {
+  width: 100%;
+  height: 38px;
+  padding: 6px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  font-size: 14px;
+}
+
+@media (max-width: 900px) {
+  .copias-grid,
+  .copias-form {
+    grid-template-columns: 1fr;
+  }
+
+  .copia-opcion {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .copia-opcion .btn-primary {
+    width: 100%;
+  }
+}
+
+@media (max-width: 640px) {
+  .historial-dia {
+    grid-template-columns: 1fr auto;
+  }
+
+  .historial-dia-seleccion {
+    grid-column: 1 / -1;
+  }
+
+  .editor-dia-cabecera {
+    flex-direction: column;
+  }
+
+  .editor-dia-acciones {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .editor-dia-botones {
+    flex-direction: column;
+  }
+
+  .copia-acciones {
+    min-width: 0;
   }
 }

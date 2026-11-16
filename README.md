@@ -68,7 +68,26 @@ El proyecto está dividido en dos aplicaciones independientes:
 
 - Listado de días con fecha, archivo original, estado y número de servicios.
 - Detalle de cada día con sus servicios y trabajadores asignados.
+- **Edición completa de un día guardado**: fecha del día o de cada servicio, casa, hora de inicio/fin, duración real, trabajadores, observaciones, añadir servicios y eliminar servicios individuales.
+- Al cambiar la hora de inicio se conserva la duración y se recalcula la hora de fin; al cambiar la duración se recalcula la hora de fin.
+- Los cambios se guardan en una transacción: los servicios existentes conservan su `id`, los nuevos se insertan y los eliminados se borran. Nunca se duplican registros.
+- Si un día se mueve a otra fecha se conserva su registro de `dias`; si se fusiona con una fecha existente, los servicios se agrupan en ese día.
+- Los totales de casas y trabajadores se recalculan automáticamente porque las horas se leen siempre de `hora_inicio`/`hora_fin`.
 - Botón **Eliminar** por día con confirmación que indica la fecha y cuántos servicios se borrarán.
+
+### Copias de seguridad
+
+- Exportación a Excel de **clientes y casas** (3 hojas: datos, actividad y resumen mensual).
+- Exportación a Excel de **trabajadores** (3 hojas: datos, historial de trabajo y resumen de horas).
+- Exportación a Excel del **historial de servicios** (4 hojas: todos los servicios y resúmenes mensual, por casa y por trabajador).
+- Copia técnica real de MySQL con `mysqldump` (`base_datos_completa.sql`): estructura, datos, claves, índices, rutinas y triggers, sin contraseñas ni claves API.
+- **Exportar copia completa**: ZIP `Backup_Claudia_Neteja_FECHA_HORA.zip` con los tres Excel, el SQL y un `README.txt` con recuentos, versión, motor de base de datos e instrucciones de restauración. Todos los archivos se generan desde una misma foto lógica de los datos.
+- Verificación automática de cada archivo: hojas y recuentos de los Excel, IDs y totales de horas; estructura y datos del SQL; contenido del ZIP.
+- Restauración de prueba en una base de datos temporal aislada (`horarios_app_verif_*`) que se elimina al terminar.
+- Restauración real con confirmación explícita (`RESTAURAR`), aviso de sobrescritura y copia previa del estado actual.
+- Historial de copias con nombre, fecha, tipo, tamaño, estado, verificación y descarga posterior mientras el archivo siga almacenado.
+- Copias automáticas configurables (diarias o semanales, hora, día de la semana, carpeta de destino adicional y retención), ejecutadas por el backend sin depender del navegador. También se puede usar `scripts/backup-automatico.js` con cron/systemd.
+- Integración real con Google Drive mediante OAuth 2.0: subida a la carpeta `Claudia Neteja`, organización por fecha, detección de duplicados y tokens guardados solo en el servidor.
 
 ### Facturación (aplazada)
 
@@ -112,7 +131,8 @@ Flujo resumido:
 | Backend | Node.js, Express 5, mysql2, multer, pdfkit |
 | IA | `@google/genai` (modelo `gemini-3.5-flash-lite`) |
 | Base de datos | MySQL (InnoDB, utf8mb4) |
-| Herramientas | ESLint, nodemon, exceljs (scripts de importación) |
+| Copias de seguridad | `mysqldump`/`mysql`, ExcelJS, Archiver, JSZip, OAuth 2.0 de Google Drive |
+| Herramientas | ESLint, nodemon, exceljs |
 
 ---
 
@@ -128,9 +148,9 @@ horarios-app/
 │   │   ├── app.js
 │   │   ├── config/db.js
 │   │   ├── data/                 # listas auxiliares
-│   │   ├── router/               # horarios, casas, trabajadores, facturas
-│   │   └── services/             # integración con Gemini
-│   ├── scripts/                  # migración e importación de datos
+│   │   ├── router/               # horarios, casas, trabajadores, facturas, backups
+│   │   └── services/             # Gemini y servicio de copias de seguridad
+│   ├── scripts/                  # migración, importación y copia automática
 │   └── README.md
 └── frontend/
     ├── index.html
@@ -138,6 +158,7 @@ horarios-app/
     │   ├── App.jsx               # casi toda la UI y el estado
     │   ├── App.css
     │   ├── main.jsx
+    │   ├── BackupView.jsx        # copias de seguridad
     │   ├── TrabajadoresView.jsx  # vista heredada
     │   ├── FacturasView.jsx      # facturación (aplazada)
     │   └── FacturaDetalleView.jsx
@@ -236,8 +257,14 @@ Todas las variables viven en `backend/.env` (no se versiona):
 | `DB_PORT` | Sí | Puerto de MySQL (normalmente `3306`). |
 | `GOOGLE_API_KEY` | Sí para analizar | API key de Google Gemini. |
 | `PORT` | No | Puerto del backend. Por defecto `3000`. |
+| `GOOGLE_DRIVE_CLIENT_ID` | No | Client ID de OAuth 2.0 para subir copias a Drive. |
+| `GOOGLE_DRIVE_CLIENT_SECRET` | No | Client Secret de OAuth 2.0. |
+| `GOOGLE_DRIVE_REDIRECT_URI` | No | URL de callback; por defecto `http://localhost:3000/api/backups/google-drive/callback`. |
+| `FRONTEND_URL` | No | URL del frontend para redirigir tras autorizar Drive; por defecto `http://localhost:5175`. |
 
 El frontend no usa variables de entorno.
+
+> Las copias automáticas y la exportación SQL necesitan el cliente `mysqldump`/`mysql` instalado en el servidor (paquete `mysql-client` en Linux).
 
 ---
 
@@ -250,7 +277,7 @@ Tablas principales:
 | `casas` | Catálogo de casas/clientes y sus condiciones de servicio. |
 | `trabajadores` | Catálogo de trabajadores con código único. |
 | `dias` | Un registro por fecha analizada/guardada. |
-| `horarios` | Servicios (casa + hora inicio/fin) de cada día. |
+| `horarios` | Servicios (casa + hora inicio/fin) de cada día; incluye `observaciones`. |
 | `horario_trabajadores` | Relación N:M entre servicios y trabajadores. |
 | `facturas` | Cabeceras de factura (módulo aplazado). |
 | `factura_detalles` | Líneas de factura (módulo aplazado). |
@@ -313,12 +340,38 @@ Resumen de endpoints (detalle completo en [`backend/README.md`](backend/README.m
 | `POST` | `/api/horarios/guardar-completo` | Guarda un día completo. |
 | `GET` | `/api/horarios/historial` | Lista los días guardados. |
 | `GET` | `/api/horarios/historial/:diaId` | Detalle de un día. |
+| `DELETE` | `/api/horarios/historial/:diaId` | Elimina un día completo *Gestión** — mantén actualizados casas y trabajadores, y consulta sus perfiles de horas.
+6. **Copias de seguridad** — exporta Excel, descarga el SQL, genera el ZIP completo, consulta el historial, configura copias automáticas y conecta Google Drive.
+
+---
+
+## API
+
+Resumen de endpoints (detalle completo en [`backend/README.md`](backend/README.md#api)):
+
+| Método | Ruta | Descripción |
+| --- | --- | --- |
+| `GET` | `/api/health` | Estado de la API. |
+| `POST` | `/api/horarios/analizar` | Analiza una imagen con Gemini. |
+| `POST` | `/api/horarios/validar` | Valida servicios contra la BD. |
+| `POST` | `/api/horarios/guardar-completo` | Guarda un día completo. |
+| `GET` | `/api/horarios/historial` | Lista los días guardados. |
+| `GET` | `/api/horarios/historial/:diaId` | Detalle de un día. |
+| `PUT` | `/api/horarios/historial/:diaId` | Edita un día completo de forma transaccional (servicios, horas, casa, trabajadores, observaciones, fechas). |
 | `DELETE` | `/api/horarios/historial/:diaId` | Elimina un día completo (servicios y asignaciones; bloquea si hay facturas). |
 | `GET/POST/PUT/PATCH/DELETE` | `/api/casas` | CRUD de casas. |
 | `GET` | `/api/casas/:id/perfil` | Horas reales, servicios y trabajadores de una casa por periodo, más total histórico. |
 | `GET/POST/PUT/PATCH` | `/api/trabajadores` | CRUD de trabajadores. |
 | `GET` | `/api/trabajadores/resumen-diario` | Minutos trabajados por día. |
 | `GET` | `/api/trabajadores/:id/perfil` | Perfil y actividad de un trabajador. |
+| `GET/PUT` | `/api/backups/configuracion` | Lee o guarda la configuración de copias automáticas. |
+| `POST` | `/api/backups/exportar/{clientes-casas,trabajadores,servicios,sql,completo}` | Genera y descarga Excel, SQL o ZIP completo con verificación. |
+| `GET` | `/api/backups` | Historial de copias. |
+| `GET` | `/api/backups/:nombre/descargar` | Descarga una copia almacenada. |
+| `POST` | `/api/backups/:nombre/verificar` | Verifica una copia almacenada. |
+| `POST` | `/api/backups/:nombre/probar-restauracion` | Restaura en una base temporal aislada y la elimina. |
+| `POST` | `/api/backups/restaurar` | Restaura una copia con confirmación `RESTAURAR`. |
+| `*` | `/api/backups/google-drive/*` | Estado, autorización OAuth, subida y desconexión de Drive. |
 | `*` | `/api/facturas` | Facturación (aplazada). |
 
 ---
@@ -326,7 +379,9 @@ Resumen de endpoints (detalle completo en [`backend/README.md`](backend/README.m
 ## Seguridad y privacidad
 
 - `backend/.env` contiene credenciales reales y **nunca** debe subirse al repositorio.
-- `uploads/`, `backups/` y `datos_reales/` están ignorados en Git porque contienen imágenes y datos personales (nombres, teléfonos, direcciones).
+- `uploads/`, `backups/` y `datos_reales/` están ignorados en Git porque contienen imágenes, copias de datos personales (nombres, teléfonos, direcciones) y metadatos internos.
+- Los tokens de Google Drive se guardan **solo en el servidor**, en `backups/google-drive-tokens.json` con permisos `600`; nunca se envían al frontend.
+- El SQL generado no incluye contraseñas, claves API ni secretos de configuración.
 - No hay autenticación ni autorización: la API está pensada para uso local.
 - CORS está completamente abierto (`cors()`), adecuado solo en desarrollo.
 - Las imágenes subidas **no se eliminan** automáticamente.
@@ -342,12 +397,19 @@ Resumen de endpoints (detalle completo en [`backend/README.md`](backend/README.m
 - Las imágenes de `uploads/` se acumulan.
 - Existen endpoints CRUD duplicados de casas y trabajadores dentro de `horarios.routes.js` (heredados, sin uso desde la interfaz).
 - El módulo de facturación está implementado en backend pero aplazado en la interfaz.
-- El esquema de base de datos no se versiona; debe crearse manualmente.
+- El esquema de base de datos no se versiona; debe crearse manualmente (salvo la migración aditiva de `observaciones`).
+- La exportación SQL y las restauraciones requieren los clientes `mysqldump`/`mysql` y permisos para crear/eliminar bases temporales.
+- La integración con Google Drive necesita credenciales OAuth propias; sin ellas la interfaz explica cómo configurarla y permite subir los archivos manualmente.
+- La restauración real sobrescribe la base de datos: úsala solo con una copia verificada y preferiblemente con la aplicación detenida.
+- El programador de copias automáticas vive en el proceso del backend; si el servidor está apagado no se ejecuta. Para independizarlo, usar cron/systemd con `scripts/backup-automatico.js`.
+- La restauración de prueba crea una base temporal y requiere privilegios `CREATE DATABASE`/`DROP DATABASE`.
 
 ---
 
 ## Roadmap
 
+- [x] Edición completa de días guardados e historial.
+- [x] Exportaciones Excel, SQL, ZIP, verificación y copias automáticas.
 - [ ] Terminar y publicar el módulo de facturación.
 - [ ] Añadir autenticación y roles.
 - [ ] Externalizar la URL de la API y el modelo de Gemini a variables de entorno.
