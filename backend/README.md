@@ -453,8 +453,8 @@ Comportamiento:
 | --- | --- | --- |
 | `GET` | `/backups` | Historial de copias (`backups/index.json`). |
 | `GET/PUT` | `/backups/configuracion` | Lee o guarda la configuración de copias automáticas. |
-| `POST` | `/backups/exportar/clientes-casas` | Genera y descarga `clientes_casas.xlsx` (3 hojas). |
-| `POST` | `/backups/exportar/trabajadores` | Genera y descarga `trabajadores.xlsx` (3 hojas). |
+| `POST` | `/backups/exportar/clientes-casas` | Genera y descarga `clientes_casas.xlsx` (4 hojas). |
+| `POST` | `/backups/exportar/trabajadores` | Genera y descarga `trabajadores.xlsx` (4 hojas). |
 | `POST` | `/backups/exportar/servicios` | Genera y descarga `servicios_historial.xlsx` (4 hojas). |
 | `POST` | `/backups/exportar/sql` | Genera y descarga `base_datos_completa.sql`. |
 | `POST` | `/backups/exportar/completo` | Genera y descarga el ZIP completo. |
@@ -559,8 +559,8 @@ El servicio `src/services/backup.service.js` concentra toda la lógica.
 
 | Archivo | Contenido |
 | --- | --- |
-| `clientes_casas.xlsx` | Clientes/casas, actividad por servicio y resumen mensual por casa. |
-| `trabajadores.xlsx` | Datos, historial de trabajo y resumen de horas por trabajador. |
+| `clientes_casas.xlsx` | Todas las casas (todos los campos), historial de servicios por casa, resumen por casa y resumen mensual. |
+| `trabajadores.xlsx` | Todos los trabajadores (todos los campos), historial de trabajo, resumen de horas por trabajador y resumen mensual. |
 | `servicios_historial.xlsx` | Todos los servicios y resúmenes mensual, por casa y por trabajador. |
 | `base_datos_completa.sql` | Estructura y datos de MySQL (`mysqldump`). |
 | `README.txt` | Fecha, versión, contenido, recuentos, motor/versión e instrucciones de restauración. |

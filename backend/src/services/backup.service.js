@@ -242,6 +242,7 @@ function agruparMensual(snapshot) {
         mes,
         servicios: 0,
         minutos: 0,
+        minutosIndividuales: 0,
         trabajadores: new Set(),
       });
     }
@@ -249,6 +250,8 @@ function agruparMensual(snapshot) {
     const grupo = mapa.get(clave);
     grupo.servicios += 1;
     grupo.minutos += servicio.minutos;
+    grupo.minutosIndividuales +=
+      servicio.minutos * servicio.trabajadores.length;
 
     for (const trabajador of servicio.trabajadores) {
       grupo.trabajadores.add(trabajador.codigo);
@@ -263,6 +266,58 @@ function agruparMensual(snapshot) {
     .sort((a, b) =>
       a.casa.localeCompare(b.casa) || a.mes.localeCompare(b.mes),
     );
+}
+
+// Resumen acumulado por casa calculado únicamente con las horas reales de
+// cada servicio (hora_inicio -> hora_fin). La duración habitual de la casa
+// nunca se utiliza aquí.
+function resumenPorCasa(snapshot) {
+  const mapa = new Map();
+
+  for (const servicio of snapshot.servicios) {
+    if (!mapa.has(servicio.casa_id)) {
+      mapa.set(servicio.casa_id, {
+        id: servicio.casa_id,
+        casa: servicio.casa,
+        visitas: 0,
+        minutos: 0,
+        minutosIndividuales: 0,
+        trabajadores: new Map(),
+        primeraFecha: servicio.fecha,
+        ultimaFecha: servicio.fecha,
+      });
+    }
+
+    const resumen = mapa.get(servicio.casa_id);
+    resumen.visitas += 1;
+    resumen.minutos += servicio.minutos;
+    resumen.minutosIndividuales +=
+      servicio.minutos * servicio.trabajadores.length;
+
+    if (servicio.fecha < resumen.primeraFecha) {
+      resumen.primeraFecha = servicio.fecha;
+    }
+
+    if (servicio.fecha > resumen.ultimaFecha) {
+      resumen.ultimaFecha = servicio.fecha;
+    }
+
+    for (const trabajador of servicio.trabajadores) {
+      resumen.trabajadores.set(
+        trabajador.id,
+        nombreCompletoTrabajador(trabajador),
+      );
+    }
+  }
+
+  return [...mapa.values()].sort((a, b) => a.casa.localeCompare(b.casa));
+}
+
+function formatearHorasPorClave(mapa) {
+  return [...mapa.entries()]
+    .sort(([a], [b]) => String(a).localeCompare(String(b)))
+    .map(([clave, minutos]) => `${clave}: ${minutosAHoras(minutos)} h`)
+    .join("; ");
 }
 
 // ============================================
@@ -331,22 +386,45 @@ const COLUMNAS_CLIENTES = [
   { header: "Total horas reales", key: "total_horas", width: 16 },
 ];
 
-const COLUMNAS_ACTIVIDAD = [
+const COLUMNAS_HISTORIAL_CASAS = [
   { header: "ID casa", key: "casa_id", width: 9 },
   { header: "Casa", key: "casa", width: 28 },
   { header: "Fecha", key: "fecha", width: 12 },
-  { header: "Trabajadores", key: "trabajadores", width: 36 },
+  { header: "Hora de inicio", key: "hora_inicio", width: 12 },
+  { header: "Hora de finalización", key: "hora_fin", width: 16 },
   { header: "Duración real (min)", key: "minutos", width: 16 },
   { header: "Duración real (h)", key: "horas", width: 14 },
-  { header: "Total visitas", key: "total_visitas", width: 12 },
-  { header: "Total horas acumuladas", key: "total_horas", width: 18 },
+  { header: "Número de trabajadores", key: "num_trabajadores", width: 16 },
+  { header: "Trabajadores", key: "trabajadores", width: 26 },
+  {
+    header: "Nombres de trabajadores",
+    key: "nombres_trabajadores",
+    width: 42,
+  },
+  { header: "Observaciones", key: "observaciones", width: 36 },
+  { header: "Total visitas casa", key: "total_visitas", width: 14 },
+  { header: "Total horas casa", key: "total_horas", width: 16 },
 ];
 
 const COLUMNAS_RESUMEN_CASAS = [
+  { header: "ID casa", key: "id", width: 9 },
+  { header: "Casa", key: "casa", width: 28 },
+  { header: "Total visitas", key: "visitas", width: 12 },
+  { header: "Total horas reales", key: "horas", width: 16 },
+  { header: "Total horas individuales", key: "horas_individuales", width: 20 },
+  { header: "Nº trabajadores distintos", key: "num_trabajadores", width: 18 },
+  { header: "Trabajadores", key: "trabajadores", width: 44 },
+  { header: "Primera fecha", key: "primera_fecha", width: 12 },
+  { header: "Última fecha", key: "ultima_fecha", width: 12 },
+];
+
+const COLUMNAS_RESUMEN_MENSUAL_CASAS = [
+  { header: "ID casa", key: "casa_id", width: 9 },
   { header: "Casa", key: "casa", width: 28 },
   { header: "Mes", key: "mes", width: 10 },
   { header: "Número de servicios", key: "servicios", width: 16 },
   { header: "Total horas reales", key: "horas", width: 16 },
+  { header: "Total horas individuales", key: "horas_individuales", width: 20 },
   { header: "Trabajadores", key: "trabajadores", width: 40 },
 ];
 
@@ -356,19 +434,12 @@ async function crearExcelClientesCasas(snapshot = null) {
   workbook.creator = NOMBRE_APP;
   workbook.created = new Date();
 
-  const totalesPorCasa = new Map();
+  const resumenCasas = resumenPorCasa(datos);
+  const resumenCasasPorId = new Map(
+    resumenCasas.map((resumen) => [resumen.id, resumen]),
+  );
 
-  for (const servicio of datos.servicios) {
-    const actual = totalesPorCasa.get(servicio.casa_id) || {
-      visitas: 0,
-      minutos: 0,
-    };
-    actual.visitas += 1;
-    actual.minutos += servicio.minutos;
-    totalesPorCasa.set(servicio.casa_id, actual);
-  }
-
-  // Hoja 1: clientes y casas
+  // Hoja 1: clientes y casas (todos los campos + totales reales)
   const hojaClientes = crearHoja(
     workbook,
     "Clientes y casas",
@@ -376,7 +447,14 @@ async function crearExcelClientesCasas(snapshot = null) {
   );
 
   for (const casa of datos.casas) {
-    const totales = totalesPorCasa.get(casa.id) || { visitas: 0, minutos: 0 };
+    const totales = resumenCasasPorId.get(casa.id) || {
+      visitas: 0,
+      minutos: 0,
+      minutosIndividuales: 0,
+      trabajadores: new Map(),
+      primeraFecha: "",
+      ultimaFecha: "",
+    };
 
     hojaClientes.addRow({
       id: casa.id,
@@ -404,48 +482,97 @@ async function crearExcelClientesCasas(snapshot = null) {
     });
   }
 
-  // Hoja 2: actividad
-  const hojaActividad = crearHoja(
+  // Hoja 2: historial completo de servicios por casa
+  const hojaHistorial = crearHoja(
     workbook,
-    "Actividad de las casas",
-    COLUMNAS_ACTIVIDAD,
+    "Historial por casa",
+    COLUMNAS_HISTORIAL_CASAS,
   );
 
   for (const servicio of datos.servicios) {
-    const totales = totalesPorCasa.get(servicio.casa_id) || {
+    const totales = resumenCasasPorId.get(servicio.casa_id) || {
       visitas: 0,
       minutos: 0,
     };
 
-    hojaActividad.addRow({
+    hojaHistorial.addRow({
       casa_id: servicio.casa_id,
       casa: servicio.casa,
       fecha: servicio.fecha,
+      hora_inicio: String(servicio.hora_inicio).slice(0, 5),
+      hora_fin: String(servicio.hora_fin).slice(0, 5),
+      minutos: servicio.minutos,
+      horas: minutosAHoras(servicio.minutos),
+      num_trabajadores: servicio.trabajadores.length,
       trabajadores: servicio.trabajadores
         .map((trabajador) => trabajador.codigo)
         .join(", "),
-      minutos: servicio.minutos,
-      horas: minutosAHoras(servicio.minutos),
+      nombres_trabajadores: servicio.trabajadores
+        .map((trabajador) => nombreCompletoTrabajador(trabajador))
+        .join(", "),
+      observaciones: normalizarTexto(servicio.observaciones),
       total_visitas: totales.visitas,
       total_horas: minutosAHoras(totales.minutos),
     });
   }
 
-  // Hoja 3: resumen mensual
-  const hojaResumen = crearHoja(
+  // Hoja 3: resumen acumulado por casa (todas las casas, solo horas reales)
+  const hojaResumenCasas = crearHoja(
     workbook,
-    "Resumen mensual",
+    "Resumen por casa",
     COLUMNAS_RESUMEN_CASAS,
   );
 
-  const resumen = agruparMensual(datos);
+  const resumenCompleto = datos.casas
+    .map((casa) => {
+      const resumen = resumenCasasPorId.get(casa.id);
 
-  for (const grupo of resumen) {
-    hojaResumen.addRow({
+      return (
+        resumen || {
+          id: casa.id,
+          casa: casa.nombre,
+          visitas: 0,
+          minutos: 0,
+          minutosIndividuales: 0,
+          trabajadores: new Map(),
+          primeraFecha: "",
+          ultimaFecha: "",
+        }
+      );
+    })
+    .sort((a, b) => a.casa.localeCompare(b.casa));
+
+  for (const resumen of resumenCompleto) {
+    hojaResumenCasas.addRow({
+      id: resumen.id,
+      casa: resumen.casa,
+      visitas: resumen.visitas,
+      horas: minutosAHoras(resumen.minutos),
+      horas_individuales: minutosAHoras(resumen.minutosIndividuales),
+      num_trabajadores: resumen.trabajadores.size,
+      trabajadores: [...resumen.trabajadores.values()].sort().join(", "),
+      primera_fecha: resumen.primeraFecha || "",
+      ultima_fecha: resumen.ultimaFecha || "",
+    });
+  }
+
+  // Hoja 4: resumen mensual por casa
+  const hojaResumenMensual = crearHoja(
+    workbook,
+    "Resumen mensual",
+    COLUMNAS_RESUMEN_MENSUAL_CASAS,
+  );
+
+  const resumenMensual = agruparMensual(datos);
+
+  for (const grupo of resumenMensual) {
+    hojaResumenMensual.addRow({
+      casa_id: grupo.casa_id,
       casa: grupo.casa,
       mes: grupo.mes,
       servicios: grupo.servicios,
       horas: minutosAHoras(grupo.minutos),
+      horas_individuales: minutosAHoras(grupo.minutosIndividuales),
       trabajadores: grupo.trabajadores,
     });
   }
@@ -460,7 +587,7 @@ async function crearExcelClientesCasas(snapshot = null) {
     resumen: {
       casas: datos.casas.length,
       servicios: datos.servicios.length,
-      filas_resumen: resumen.length,
+      filas_resumen: resumenMensual.length,
     },
   };
 }
@@ -482,9 +609,15 @@ const COLUMNAS_TRABAJADORES = [
   { header: "Datos pendientes", key: "datos_pendientes", width: 14 },
   { header: "Fecha de alta", key: "fecha_creacion", width: 20 },
   { header: "Última actualización", key: "fecha_actualizacion", width: 20 },
+  { header: "Total servicios", key: "total_servicios", width: 14 },
+  { header: "Total horas trabajadas", key: "total_horas", width: 18 },
+  { header: "Casas en las que ha trabajado", key: "casas", width: 44 },
+  { header: "Primera fecha trabajada", key: "primera_fecha", width: 16 },
+  { header: "Última fecha trabajada", key: "ultima_fecha", width: 16 },
 ];
 
 const COLUMNAS_HISTORIAL_TRABAJADOR = [
+  { header: "ID servicio", key: "servicio_id", width: 11 },
   { header: "ID trabajador", key: "trabajador_id", width: 12 },
   { header: "Trabajador", key: "trabajador", width: 28 },
   { header: "Fecha", key: "fecha", width: 12 },
@@ -504,13 +637,131 @@ const COLUMNAS_RESUMEN_TRABAJADORES = [
   { header: "Total horas trabajadas", key: "horas", width: 18 },
   { header: "Horas por mes", key: "horas_mes", width: 44 },
   { header: "Casas en las que ha trabajado", key: "casas", width: 48 },
+  { header: "Horas por casa", key: "horas_casa", width: 52 },
+  { header: "Horas por día", key: "horas_dia", width: 52 },
+  { header: "Días trabajados", key: "dias", width: 14 },
+  { header: "Primera fecha", key: "primera_fecha", width: 12 },
+  { header: "Última fecha", key: "ultima_fecha", width: 12 },
 ];
+
+const COLUMNAS_RESUMEN_MENSUAL_TRABAJADORES = [
+  { header: "ID trabajador", key: "id", width: 12 },
+  { header: "Trabajador", key: "trabajador", width: 28 },
+  { header: "Mes", key: "mes", width: 10 },
+  { header: "Número de servicios", key: "servicios", width: 16 },
+  { header: "Total horas trabajadas", key: "horas", width: 18 },
+  { header: "Casas", key: "casas", width: 42 },
+  { header: "Días trabajados", key: "dias", width: 14 },
+];
+
+// Acumula las horas individuales reales de cada trabajador. Cada asignación
+// cuenta una vez y suma la duración real del servicio (nunca la duración
+// habitual de la casa).
+function resumenTrabajadores(datos) {
+  const mapa = new Map();
+
+  for (const trabajador of datos.trabajadores) {
+    mapa.set(trabajador.id, {
+      id: trabajador.id,
+      trabajador: nombreCompletoTrabajador(trabajador),
+      codigo: trabajador.codigo,
+      servicios: 0,
+      minutos: 0,
+      meses: new Map(),
+      casas: new Map(),
+      dias: new Map(),
+      primeraFecha: "",
+      ultimaFecha: "",
+    });
+  }
+
+  for (const servicio of datos.servicios) {
+    for (const trabajador of servicio.trabajadores) {
+      if (!mapa.has(trabajador.id)) {
+        mapa.set(trabajador.id, {
+          id: trabajador.id,
+          trabajador: nombreCompletoTrabajador(trabajador),
+          codigo: trabajador.codigo,
+          servicios: 0,
+          minutos: 0,
+          meses: new Map(),
+          casas: new Map(),
+          dias: new Map(),
+          primeraFecha: "",
+          ultimaFecha: "",
+        });
+      }
+
+      const resumen = mapa.get(trabajador.id);
+      resumen.servicios += 1;
+      resumen.minutos += servicio.minutos;
+
+      const mes = String(servicio.fecha).slice(0, 7);
+      resumen.meses.set(mes, (resumen.meses.get(mes) || 0) + servicio.minutos);
+      resumen.casas.set(
+        servicio.casa,
+        (resumen.casas.get(servicio.casa) || 0) + servicio.minutos,
+      );
+      resumen.dias.set(
+        servicio.fecha,
+        (resumen.dias.get(servicio.fecha) || 0) + servicio.minutos,
+      );
+
+      if (!resumen.primeraFecha || servicio.fecha < resumen.primeraFecha) {
+        resumen.primeraFecha = servicio.fecha;
+      }
+
+      if (!resumen.ultimaFecha || servicio.fecha > resumen.ultimaFecha) {
+        resumen.ultimaFecha = servicio.fecha;
+      }
+    }
+  }
+
+  return mapa;
+}
+
+function resumenMensualTrabajadores(datos) {
+  const mapa = new Map();
+
+  for (const servicio of datos.servicios) {
+    const mes = String(servicio.fecha).slice(0, 7);
+
+    for (const trabajador of servicio.trabajadores) {
+      const clave = `${trabajador.id}|${mes}`;
+
+      if (!mapa.has(clave)) {
+        mapa.set(clave, {
+          id: trabajador.id,
+          trabajador: nombreCompletoTrabajador(trabajador),
+          mes,
+          servicios: 0,
+          minutos: 0,
+          casas: new Set(),
+          dias: new Set(),
+        });
+      }
+
+      const grupo = mapa.get(clave);
+      grupo.servicios += 1;
+      grupo.minutos += servicio.minutos;
+      grupo.casas.add(servicio.casa);
+      grupo.dias.add(servicio.fecha);
+    }
+  }
+
+  return [...mapa.values()].sort(
+    (a, b) =>
+      a.trabajador.localeCompare(b.trabajador) || a.mes.localeCompare(b.mes),
+  );
+}
 
 async function crearExcelTrabajadores(snapshot = null) {
   const datos = snapshot || (await obtenerSnapshot());
   const workbook = new ExcelJS.Workbook();
   workbook.creator = NOMBRE_APP;
   workbook.created = new Date();
+
+  const resumenes = resumenTrabajadores(datos);
 
   const hojaDatos = crearHoja(
     workbook,
@@ -519,6 +770,14 @@ async function crearExcelTrabajadores(snapshot = null) {
   );
 
   for (const trabajador of datos.trabajadores) {
+    const resumen = resumenes.get(trabajador.id) || {
+      servicios: 0,
+      minutos: 0,
+      casas: new Map(),
+      primeraFecha: "",
+      ultimaFecha: "",
+    };
+
     hojaDatos.addRow({
       id: trabajador.id,
       nombre: normalizarTexto(trabajador.nombre),
@@ -532,6 +791,11 @@ async function crearExcelTrabajadores(snapshot = null) {
       datos_pendientes: Number(trabajador.datos_pendientes) ? "Sí" : "No",
       fecha_creacion: normalizarTexto(trabajador.fecha_creacion),
       fecha_actualizacion: normalizarTexto(trabajador.fecha_actualizacion),
+      total_servicios: resumen.servicios,
+      total_horas: minutosAHoras(resumen.minutos),
+      casas: [...resumen.casas.keys()].sort().join(", "),
+      primera_fecha: resumen.primeraFecha || "",
+      ultima_fecha: resumen.ultimaFecha || "",
     });
   }
 
@@ -541,23 +805,10 @@ async function crearExcelTrabajadores(snapshot = null) {
     COLUMNAS_HISTORIAL_TRABAJADOR,
   );
 
-  const resumenPorTrabajador = new Map();
-
-  for (const trabajador of datos.trabajadores) {
-    resumenPorTrabajador.set(trabajador.id, {
-      id: trabajador.id,
-      trabajador: nombreCompletoTrabajador(trabajador),
-      codigo: trabajador.codigo,
-      servicios: 0,
-      minutos: 0,
-      meses: new Map(),
-      casas: new Set(),
-    });
-  }
-
   for (const servicio of datos.servicios) {
     for (const trabajador of servicio.trabajadores) {
       hojaHistorial.addRow({
+        servicio_id: servicio.id,
         trabajador_id: trabajador.id,
         trabajador: nombreCompletoTrabajador(trabajador),
         fecha: servicio.fecha,
@@ -568,20 +819,6 @@ async function crearExcelTrabajadores(snapshot = null) {
         horas: minutosAHoras(servicio.minutos),
         observaciones: normalizarTexto(servicio.observaciones),
       });
-
-      const resumen = resumenPorTrabajador.get(trabajador.id);
-
-      if (resumen) {
-        resumen.servicios += 1;
-        resumen.minutos += servicio.minutos;
-        resumen.casas.add(servicio.casa);
-
-        const mes = String(servicio.fecha).slice(0, 7);
-        resumen.meses.set(
-          mes,
-          (resumen.meses.get(mes) || 0) + servicio.minutos,
-        );
-      }
     }
   }
 
@@ -591,18 +828,38 @@ async function crearExcelTrabajadores(snapshot = null) {
     COLUMNAS_RESUMEN_TRABAJADORES,
   );
 
-  for (const resumen of resumenPorTrabajador.values()) {
+  for (const resumen of resumenes.values()) {
     hojaResumen.addRow({
       id: resumen.id,
       trabajador: resumen.trabajador,
       codigo: resumen.codigo,
       servicios: resumen.servicios,
       horas: minutosAHoras(resumen.minutos),
-      horas_mes: [...resumen.meses.entries()]
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([mes, minutos]) => `${mes}: ${minutosAHoras(minutos)} h`)
-        .join("; "),
-      casas: [...resumen.casas].sort().join(", "),
+      horas_mes: formatearHorasPorClave(resumen.meses),
+      casas: [...resumen.casas.keys()].sort().join(", "),
+      horas_casa: formatearHorasPorClave(resumen.casas),
+      horas_dia: formatearHorasPorClave(resumen.dias),
+      dias: resumen.dias.size,
+      primera_fecha: resumen.primeraFecha || "",
+      ultima_fecha: resumen.ultimaFecha || "",
+    });
+  }
+
+  const hojaResumenMensual = crearHoja(
+    workbook,
+    "Resumen mensual",
+    COLUMNAS_RESUMEN_MENSUAL_TRABAJADORES,
+  );
+
+  for (const grupo of resumenMensualTrabajadores(datos)) {
+    hojaResumenMensual.addRow({
+      id: grupo.id,
+      trabajador: grupo.trabajador,
+      mes: grupo.mes,
+      servicios: grupo.servicios,
+      horas: minutosAHoras(grupo.minutos),
+      casas: [...grupo.casas].sort().join(", "),
+      dias: grupo.dias.size,
     });
   }
 
@@ -903,7 +1160,8 @@ async function verificarExcelClientes(buffer, datos) {
 
   const nombresEsperados = [
     "Clientes y casas",
-    "Actividad de las casas",
+    "Historial por casa",
+    "Resumen por casa",
     "Resumen mensual",
   ];
 
@@ -917,7 +1175,9 @@ async function verificarExcelClientes(buffer, datos) {
   }
 
   const hojaClientes = workbook.getWorksheet("Clientes y casas");
-  const hojaActividad = workbook.getWorksheet("Actividad de las casas");
+  const hojaHistorial = workbook.getWorksheet("Historial por casa");
+  const hojaResumenCasas = workbook.getWorksheet("Resumen por casa");
+  const hojaResumenMensual = workbook.getWorksheet("Resumen mensual");
 
   if (hojaClientes) {
     const filas = Math.max(0, hojaClientes.rowCount - 1);
@@ -938,21 +1198,83 @@ async function verificarExcelClientes(buffer, datos) {
     );
   }
 
-  if (hojaActividad) {
-    const filas = Math.max(0, hojaActividad.rowCount - 1);
+  if (hojaHistorial) {
+    const filas = Math.max(0, hojaHistorial.rowCount - 1);
     anotar(
       resultado,
-      "Filas de actividad",
+      "Filas de historial por casa",
       filas === datos.servicios.length,
       `${filas} filas (esperadas ${datos.servicios.length})`,
     );
 
-    const minutos = sumarColumna(hojaActividad, 5);
+    const minutos = sumarColumna(hojaHistorial, 6);
     anotar(
       resultado,
       "Minutos de servicio coinciden",
       minutos === datos.totalMinutosServicio,
       `${minutos} min (esperados ${datos.totalMinutosServicio})`,
+    );
+
+    const idsEsperados = new Set(
+      datos.servicios.map((servicio) => Number(servicio.casa_id)),
+    );
+    const idsExportados = idsDeColumna(hojaHistorial, 1);
+    anotar(
+      resultado,
+      "Todas las casas con servicios incluidas",
+      idsEsperados.size === idsExportados.size &&
+        [...idsEsperados].every((id) => idsExportados.has(id)),
+      `${idsExportados.size} casas con actividad`,
+    );
+  }
+
+  if (hojaResumenCasas) {
+    const filas = Math.max(0, hojaResumenCasas.rowCount - 1);
+    anotar(
+      resultado,
+      "Filas de resumen por casa",
+      filas === datos.casas.length,
+      `${filas} filas (esperadas ${datos.casas.length})`,
+    );
+
+    const horas = sumarColumna(hojaResumenCasas, 4);
+    const esperadas = minutosAHoras(datos.totalMinutosServicio);
+    anotar(
+      resultado,
+      "Horas reales por casa coinciden",
+      Math.abs(horas - esperadas) <= 0.01 * Math.max(1, filas) + 0.01,
+      `${horas} h (esperadas ${esperadas} h)`,
+    );
+
+    const horasIndividuales = sumarColumna(hojaResumenCasas, 5);
+    const esperadasIndividuales = minutosAHoras(
+      datos.totalMinutosIndividuales,
+    );
+    anotar(
+      resultado,
+      "Horas individuales por casa coinciden",
+      Math.abs(horasIndividuales - esperadasIndividuales) <=
+        0.01 * Math.max(1, filas) + 0.01,
+      `${horasIndividuales} h (esperadas ${esperadasIndividuales} h)`,
+    );
+  }
+
+  if (hojaResumenMensual) {
+    const filas = Math.max(0, hojaResumenMensual.rowCount - 1);
+    anotar(
+      resultado,
+      "Filas de resumen mensual por casa",
+      filas > 0 || datos.servicios.length === 0,
+      `${filas} filas`,
+    );
+
+    const horas = sumarColumna(hojaResumenMensual, 5);
+    const esperadas = minutosAHoras(datos.totalMinutosServicio);
+    anotar(
+      resultado,
+      "Horas mensuales por casa coinciden",
+      Math.abs(horas - esperadas) <= 0.01 * Math.max(1, filas) + 0.01,
+      `${horas} h (esperadas ${esperadas} h)`,
     );
   }
 
@@ -967,6 +1289,7 @@ async function verificarExcelTrabajadores(buffer, datos) {
     "Datos de trabajadores",
     "Historial de trabajo",
     "Resumen de horas",
+    "Resumen mensual",
   ];
 
   for (const nombre of nombresEsperados) {
@@ -980,6 +1303,8 @@ async function verificarExcelTrabajadores(buffer, datos) {
 
   const hojaDatos = workbook.getWorksheet("Datos de trabajadores");
   const hojaHistorial = workbook.getWorksheet("Historial de trabajo");
+  const hojaResumen = workbook.getWorksheet("Resumen de horas");
+  const hojaResumenMensual = workbook.getWorksheet("Resumen mensual");
 
   if (hojaDatos) {
     const filas = Math.max(0, hojaDatos.rowCount - 1);
@@ -1011,12 +1336,52 @@ async function verificarExcelTrabajadores(buffer, datos) {
       `${filas} filas (esperadas ${datos.totalAsignaciones})`,
     );
 
-    const minutos = sumarColumna(hojaHistorial, 7);
+    const minutos = sumarColumna(hojaHistorial, 8);
     anotar(
       resultado,
       "Horas individuales coinciden",
       minutos === datos.totalMinutosIndividuales,
       `${minutos} min (esperados ${datos.totalMinutosIndividuales})`,
+    );
+  }
+
+  const esperadasIndividuales = minutosAHoras(datos.totalMinutosIndividuales);
+
+  if (hojaResumen) {
+    const filas = Math.max(0, hojaResumen.rowCount - 1);
+    anotar(
+      resultado,
+      "Filas de resumen de horas",
+      filas === datos.trabajadores.length,
+      `${filas} filas (esperadas ${datos.trabajadores.length})`,
+    );
+
+    const horas = sumarColumna(hojaResumen, 5);
+    anotar(
+      resultado,
+      "Total de horas por trabajador coincide",
+      Math.abs(horas - esperadasIndividuales) <=
+        0.01 * Math.max(1, filas) + 0.01,
+      `${horas} h (esperadas ${esperadasIndividuales} h)`,
+    );
+  }
+
+  if (hojaResumenMensual) {
+    const filas = Math.max(0, hojaResumenMensual.rowCount - 1);
+    anotar(
+      resultado,
+      "Filas de resumen mensual por trabajador",
+      filas > 0 || datos.totalAsignaciones === 0,
+      `${filas} filas`,
+    );
+
+    const horas = sumarColumna(hojaResumenMensual, 5);
+    anotar(
+      resultado,
+      "Horas mensuales por trabajador coinciden",
+      Math.abs(horas - esperadasIndividuales) <=
+        0.01 * Math.max(1, filas) + 0.01,
+      `${horas} h (esperadas ${esperadasIndividuales} h)`,
     );
   }
 

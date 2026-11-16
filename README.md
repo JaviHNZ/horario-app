@@ -77,8 +77,8 @@ El proyecto está dividido en dos aplicaciones independientes:
 
 ### Copias de seguridad
 
-- Exportación a Excel de **clientes y casas** (3 hojas: datos, actividad y resumen mensual).
-- Exportación a Excel de **trabajadores** (3 hojas: datos, historial de trabajo y resumen de horas).
+- Exportación a Excel de **clientes y casas** (4 hojas: datos completos, historial por casa, resumen por casa y resumen mensual).
+- Exportación a Excel de **trabajadores** (4 hojas: datos completos, historial de trabajo, resumen de horas por trabajador y resumen mensual).
 - Exportación a Excel del **historial de servicios** (4 hojas: todos los servicios y resúmenes mensual, por casa y por trabajador).
 - Copia técnica real de MySQL con `mysqldump` (`base_datos_completa.sql`): estructura, datos, claves, índices, rutinas y triggers, sin contraseñas ni claves API.
 - **Exportar copia completa**: ZIP `Backup_Claudia_Neteja_FECHA_HORA.zip` con los tres Excel, el SQL y un `README.txt` con recuentos, versión, motor de base de datos e instrucciones de restauración. Todos los archivos se generan desde una misma foto lógica de los datos.
